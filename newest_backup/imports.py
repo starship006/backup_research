@@ -41,16 +41,33 @@ import plotly
 import circuitsvis as cv
 import os, sys
 
+import urllib.request
+import zipfile
 
 if not os.path.exists("path_patching.py"):
-        !wget https://github.com/callummcdougall/path_patching/archive/refs/heads/main.zip
-        !unzip main.zip 'path_patching-main/ioi_dataset.py'
-        !unzip main.zip 'path_patching-main/path_patching.py'
-        sys.path.append("path_patching-main")
-        os.remove("main.zip")
-        os.rename("path_patching-main/ioi_dataset.py", "ioi_dataset.py")
-        os.rename("path_patching-main/path_patching.py", "path_patching.py")
-        os.rmdir("path_patching-main")
+    urllib.request.urlretrieve("https://github.com/callummcdougall/path_patching/archive/refs/heads/main.zip", "main.zip")
+    
+    with zipfile.ZipFile("main.zip", "r") as zip_ref:
+        zip_ref.extract("path_patching-main/ioi_dataset.py")
+        zip_ref.extract("path_patching-main/path_patching.py")
+    
+    sys.path.append("path_patching-main")
+    
+    os.remove("main.zip")
+    os.rename("path_patching-main/ioi_dataset.py", "ioi_dataset.py")
+    os.rename("path_patching-main/path_patching.py", "path_patching.py")
+    os.rmdir("path_patching-main")
+
+
+# if not os.path.exists("path_patching.py"):
+#         !wget https://github.com/callummcdougall/path_patching/archive/refs/heads/main.zip
+#         !unzip main.zip 'path_patching-main/ioi_dataset.py'
+#         !unzip main.zip 'path_patching-main/path_patching.py'
+#         sys.path.append("path_patching-main")
+#         os.remove("main.zip")
+#         os.rename("path_patching-main/ioi_dataset.py", "ioi_dataset.py")
+#         os.rename("path_patching-main/path_patching.py", "path_patching.py")
+#         os.rmdir("path_patching-main")
 
 from path_patching import Node, IterNode, path_patch, act_patch
 
@@ -119,5 +136,3 @@ def hist(tensor, renderer=None, **kwargs):
 
 from plotly import graph_objects as go
 from plotly.subplots import make_subplots
-
-# %%
