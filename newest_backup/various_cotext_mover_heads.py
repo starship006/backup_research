@@ -421,10 +421,10 @@ def plot_accumulated_backup_per_head(top_k_to_isolate, total_accumulated_backup_
     fig.add_trace(scatter_plot)
     fig.update_layout(
 
-    title=f"Total Accumulated Backup of Heads on top {(str(round(top_k_to_isolate / (BATCH_SIZE * (PROMPT_LEN - 1)) * 100, 2)) +'%') if top_k_to_isolate != 0 else 'All'}"
-      + " Prompts vs. Average Direct Effect of Heads",
-    width = 1000
-)
+        title=f"Total Accumulated Backup of Heads on top {(str(round(top_k_to_isolate / (BATCH_SIZE * (PROMPT_LEN - 1)) * 100, 2)) +'%') if top_k_to_isolate != 0 else 'All'}"
+        + " Prompts vs. Average Direct Effect of Heads",
+        width = 1000
+    )
     fig.update_xaxes(title = "Average Direct Effect of Head")
     fig.update_yaxes(title = "Total Accumulated Backup")
     fig.show()
