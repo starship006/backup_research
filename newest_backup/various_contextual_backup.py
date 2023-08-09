@@ -1,130 +1,11 @@
 # %%
-#%pip install git+https://github.com/neelnanda-io/TransformerLens.git
-import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-from torch import Tensor
-import pickle
 
-import numpy as np
-import pandas as pd
-import einops
-from fancy_einsum import einsum
-import tqdm.auto as tqdm
-import random
-from pathlib import Path
-# import plotly.express as px
-from torch.utils.data import DataLoader
-from typing import Union, List, Optional, Callable, Tuple, Dict, Literal, Set
-from jaxtyping import Float, Int
-from functools import partial
-import copy
-
-import itertools
-from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
-import dataclasses
-import datasets
-from IPython.display import HTML
-
-import transformer_lens
-import transformer_lens.utils as utils
-from transformer_lens.utils import to_numpy
-from transformer_lens.hook_points import (
-    HookedRootModule,
-    HookPoint,
-)  # Hooking utilities
-from transformer_lens import HookedTransformer, HookedTransformerConfig, FactoredMatrix, ActivationCache, patching
-
-#%pip install plotly
-import plotly
-import plotly.express as px
-#%pip install git+https://github.com/callummcdougall/CircuitsVis.git#subdirectory=python
-import circuitsvis as cv
-import os, sys
-
-
-#!sudo apt install unzip
-if not os.path.exists("path_patching.py"):
-        !wget https://github.com/callummcdougall/path_patching/archive/refs/heads/main.zip
-        !unzip main.zip 'path_patching-main/ioi_dataset.py'
-        !unzip main.zip 'path_patching-main/path_patching.py'
-        sys.path.append("path_patching-main")
-        os.remove("main.zip")
-        os.rename("path_patching-main/ioi_dataset.py", "ioi_dataset.py")
-        os.rename("path_patching-main/path_patching.py", "path_patching.py")
-        os.rmdir("path_patching-main")
-
-from path_patching import Node, IterNode, path_patch, act_patch
-
-
-#%pip install git+https://github.com/neelnanda-io/neel-plotly.git
-from neel_plotly import imshow, line, scatter, histogram
-import tqdm
-torch.set_grad_enabled(False)
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
-# %%
-device
-
-# %%
-update_layout_set = {
-    "xaxis_range", "yaxis_range", "hovermode", "xaxis_title", "yaxis_title", "colorbar", "colorscale", "coloraxis", "title_x", "bargap", "bargroupgap", "xaxis_tickformat",
-    "yaxis_tickformat", "title_y", "legend_title_text", "xaxis_showgrid", "xaxis_gridwidth", "xaxis_gridcolor", "yaxis_showgrid", "yaxis_gridwidth", "yaxis_gridcolor",
-    "showlegend", "xaxis_tickmode", "yaxis_tickmode", "xaxis_tickangle", "yaxis_tickangle", "margin", "xaxis_visible", "yaxis_visible", "bargap", "bargroupgap"
-}
-
-def imshow(tensor, return_fig = False, renderer=None, **kwargs):
-    kwargs_post = {k: v for k, v in kwargs.items() if k in update_layout_set}
-    kwargs_pre = {k: v for k, v in kwargs.items() if k not in update_layout_set}
-    facet_labels = kwargs_pre.pop("facet_labels", None)
-    border = kwargs_pre.pop("border", False)
-    if "color_continuous_scale" not in kwargs_pre:
-        kwargs_pre["color_continuous_scale"] = "RdBu"
-    if "margin" in kwargs_post and isinstance(kwargs_post["margin"], int):
-        kwargs_post["margin"] = dict.fromkeys(list("tblr"), kwargs_post["margin"])
-    fig = px.imshow(utils.to_numpy(tensor), color_continuous_midpoint=0.0, **kwargs_pre)
-    if facet_labels:
-        for i, label in enumerate(facet_labels):
-            fig.layout.annotations[i]['text'] = label
-    if border:
-        fig.update_xaxes(showline=True, linewidth=1, linecolor='black', mirror=True)
-        fig.update_yaxes(showline=True, linewidth=1, linecolor='black', mirror=True)
-    # things like `xaxis_tickmode` should be applied to all subplots. This is super janky lol but I'm under time pressure
-    for setting in ["tickangle"]:
-      if f"xaxis_{setting}" in kwargs_post:
-          i = 2
-          while f"xaxis{i}" in fig["layout"]:
-            kwargs_post[f"xaxis{i}_{setting}"] = kwargs_post[f"xaxis_{setting}"]
-            i += 1
-    fig.update_layout(**kwargs_post)
-    
-    if return_fig:
-      return fig
-    else:
-      fig.show(renderer=renderer)
-
-def hist(tensor, renderer=None, **kwargs):
-    kwargs_post = {k: v for k, v in kwargs.items() if k in update_layout_set}
-    kwargs_pre = {k: v for k, v in kwargs.items() if k not in update_layout_set}
-    names = kwargs_pre.pop("names", None)
-    if "barmode" not in kwargs_post:
-        kwargs_post["barmode"] = "overlay"
-    if "bargap" not in kwargs_post:
-        kwargs_post["bargap"] = 0.0
-    if "margin" in kwargs_post and isinstance(kwargs_post["margin"], int):
-        kwargs_post["margin"] = dict.fromkeys(list("tblr"), kwargs_post["margin"])
-    fig = px.histogram(x=tensor, **kwargs_pre).update_layout(**kwargs_post)
-    if names is not None:
-        for i in range(len(fig.data)):
-            fig.data[i]["name"] = names[i // 2]
-    fig.show(renderer)
-
-
-from plotly import graph_objects as go
-from plotly.subplots import make_subplots
-
+# !sudo apt install unzip
+# !pip install git+https://github.com/callummcdougall/CircuitsVis.git#subdirectory=python
+# !pip install git+https://github.com/neelnanda-io/neel-plotly.git
+# !pip install 
+!pip install plotly fancy_einsum jaxtyping transformers datasets transformer_lens
+from imports import *
 # %%
 
 model_name = "gpt2-small"
@@ -638,9 +519,8 @@ print(model.to_str_tokens(handle_string_B))
 print(model.to_str_tokens(ignore_mr_string))
 print(model.to_str_tokens(ignore_mrs_string))
 # %%
-
 TOTAL_TYPES = 4
-NUM_PROMPTS = 15 * 6 * TOTAL_TYPES
+NUM_PROMPTS = 4 * 6 * TOTAL_TYPES
 PROMPTS_PER_TYPE = int(NUM_PROMPTS / TOTAL_TYPES)
 
 
@@ -921,6 +801,8 @@ def display_all_logits(cache = None, per_head_ld = None, title = "Logit Contribu
                         return_fig = False, logits = None, include_incorrect = False):
     """
     given an input, display the logit contributions of each head
+
+    comparison: if True, display logit contribution/diff diff; if False, display logits contibution/diff
     """
     if per_head_ld is not None and cache is None:
         assert per_head_ld.shape == (model.cfg.n_layers, model.cfg.n_heads, NUM_PROMPTS)
@@ -984,9 +866,11 @@ def return_item(item):
 
 
 # %%
+model.set_use_attn_result(True)
 clean_per_prompt_logits = logits_to_ave_logit_diff(clean_logits, answer_tokens, per_prompt=False, include_incorrect=INCLUDE_INCORRECT)
 corrupt_per_prompt_logits = logits_to_ave_logit_diff(corrupt_logits, answer_tokens, per_prompt=False, include_incorrect=INCLUDE_INCORRECT)
 clean_per_prompt_head_logit_diff: Float[Tensor, "layer head batch"] = calc_all_logit_contibutions(clean_cache, per_prompt=True, include_incorrect=INCLUDE_INCORRECT)
+per_head_logit_diff = calc_all_logit_contibutions(clean_cache, per_prompt=False, include_incorrect=INCLUDE_INCORRECT)
 print(clean_per_prompt_logits)
 print(corrupt_per_prompt_logits)
 # %%
@@ -1033,7 +917,7 @@ def path_patch_to_and_display(heads, include_incorrect = False):
     display_all_logits(per_head_ld = path_patch_from_results, comparison=True, title = f"Logit Diff Diff of each Head upon Noisily Path Patching into Query from {heads} in {model_name}", include_incorrect=include_incorrect)
 
 # %%
-path_patch_to_and_display([[9,6]], include_incorrect=INCLUDE_INCORRECT)
+path_patch_to_and_display([[9,9]], include_incorrect=INCLUDE_INCORRECT)
 # %%
 #path_patch_to_and_display([[9,6], [9,9]])
 
@@ -1143,6 +1027,442 @@ fig = show_per_prompt_activation_sliders([[9,6], [9,9], [10,0]], include_incorre
 # save the fig to html
 
 fig.write_html(f"{model_name}_per_prompt_activation_sliders.html")
+
+
+# %% 
+
+# Query Intervention to isolate some important directions.
+
+def store_activation(
+    activation,
+    hook: HookPoint,
+    where_to_store
+):
+    """
+    takes a storage container where_to_store, and stores the activation in it at a hook
+    """""
+    where_to_store[:] = activation
+
+
+def get_projection(from_vector, to_vector):
+    dot_product = einops.einsum(from_vector, to_vector, "batch d_model, batch d_model -> batch")
+    #print("Average Dot Product of Output Across Batch: " + str(dot_product.mean(0)))
+    length_of_from_vector = einops.einsum(from_vector, from_vector, "batch d_model, batch d_model -> batch")
+    length_of_vector = einops.einsum(to_vector, to_vector, "batch d_model, batch d_model -> batch")
+    projected_lengths = (dot_product) / (length_of_vector)
+    #print( einops.repeat(projected_lengths, "batch -> batch d_model", d_model = model.cfg.d_model)[0])
+    projections = to_vector * einops.repeat(projected_lengths, "batch -> batch d_model", d_model = to_vector.shape[-1])
+    return projections
+
+def project_vector_operation(
+    original_resid_stream: Float[Tensor, "batch seq head_idx d_model"],
+    hook: HookPoint,
+    vector: Float[Tensor, "batch d_model"],
+    position = -1,
+    heads = [], # array of ints
+    scale_proj = 1,
+    project_only = False
+) -> Float[Tensor, "batch n_head pos pos"]:
+  '''
+  Function which gets orthogonal projection of residual stream to a vector, and either subtracts it or keeps only it
+  '''
+  for head in heads:
+    projections = get_projection(original_resid_stream[:, position, head, :], vector)
+    if project_only:
+      original_resid_stream[:, position, head, :] = projections * scale_proj
+    else:
+      original_resid_stream[:, position, head, :] = (original_resid_stream[:, position, head, :] - projections) * scale_proj #torch.zeros(original_resid_stream[:, position, head, :].shape)#
+
+  return original_resid_stream
+
+
+# get ldds when intervening and replacing with directions of corrupted runs
+def project_away_component_and_replace_with_something_else(
+    original_resid_out: Float[Tensor, "batch seq head_idx d_model"],
+    hook: HookPoint,
+    project_away_vector: Float[Tensor, "batch d_model"],
+    replace_vector : Float[Tensor, "batch d_model"],
+    position = -1,
+    heads = [], # array of ints,
+    project_only = False # whether to, instead of projecting away the vector, keep it!
+) -> Float[Tensor, "batch n_head pos pos"]:
+    '''
+    Function which gets removes a specific component (or keeps only it, if project_only = True) of the an output of a head and replaces it with another vector
+    '''
+    # right now this projects away the IO direction!
+    assert project_away_vector.shape == replace_vector.shape and len(project_away_vector.shape) == 2
+
+    for head in heads:
+
+        head_output = original_resid_out[:, position, head, :]
+        projections = get_projection(head_output, project_away_vector)
+
+        if project_only:
+            resid_without_projection =  projections
+        else:
+            resid_without_projection = (head_output - projections)
+
+        updated_resid = resid_without_projection + replace_vector
+        original_resid_out[:, position, head, :] = updated_resid
+
+    return original_resid_out
+
+def patch_last_ln(ln_scale, hook):
+  #print(torch.equal(ln_scale, clean_cache["blocks." + str(hook.layer()) + ".ln1.hook_scale"]))
+  #print("froze lnfinal")
+  ln_scale = clean_cache["ln_final.hook_scale"]
+  return ln_scale
+
+unembed_io_directions = model.tokens_to_residual_directions(answer_tokens[:, 0])
+#unembed_s_directions = model.tokens_to_residual_directions(answer_tokens[:, 1])
+#unembed_diff_directions = unembed_io_directions - unembed_s_directions
+
+target_intervene_direction = unembed_io_directions
+ln_on = True
+def patch_head_vector(
+    head_vector: Float[Tensor, "batch pos head_index d_head"],
+    hook: HookPoint,
+    head_indices: int,
+    other_cache: ActivationCache
+) -> Float[Tensor, "batch pos head_index d_head"]:
+    '''
+    Patches the output of a given head (before it's added to the residual stream) at
+    every sequence position, using the value from the other cache.
+    '''
+    for head_index in head_indices:
+      head_vector[:, :, head_index] = other_cache[hook.name][:, :, head_index]
+    return head_vector
+
+def patch_ln_scale(ln_scale, hook):
+  #print(torch.equal(ln_scale, clean_cache["blocks." + str(hook.layer()) + ".ln1.hook_scale"]))
+  ln_scale = clean_cache["blocks." + str(hook.layer()) + ".ln1.hook_scale"]
+  return ln_scale
+
+def patch_ln2_scale(ln_scale, hook):
+  #print(torch.equal(ln_scale, clean_cache["blocks." + str(hook.layer()) + ".ln1.hook_scale"]))
+  ln_scale = clean_cache["blocks." + str(hook.layer()) + ".ln2.hook_scale"]
+  return ln_scale
+
+def kq_rewrite_hook(
+    internal_value: Float[Tensor, "batch seq head d_head"],
+    hook: HookPoint,
+    head,
+    unnormalized_resid:  Float[Tensor, "batch seq d_model"],
+    vector,
+    act_name,
+    scale = 1,
+    position = -1,
+    pre_ln = True
+):
+  """
+  replaces keys or queries with a new result which we get from adding a vector to a position at the residual stream
+  head: tuple for head to rewrite keys for
+  unnormalized_resid: stored unnormalized residual stream needed to recalculated activations
+  """
+
+  ln1 = model.blocks[hook.layer()].ln1
+  temp_resid = unnormalized_resid.clone()
+
+  if pre_ln:
+    temp_resid[:, position, :] = temp_resid[:, position, :] + scale * vector
+    normalized_resid = ln1(temp_resid)
+  else:
+    temp_resid = ln1(temp_resid)
+    temp_resid[:, position, :] = temp_resid[:, position, :] + scale * vector
+    normalized_resid = temp_resid
+
+
+  assert act_name == "q" or act_name == "k"
+  if act_name == "q":
+    W_Q, b_Q = model.W_Q[head[0], head[1]], model.b_Q[head[0], head[1]]
+    internal_value[..., head[1], :] = einops.einsum(normalized_resid, W_Q, "batch seq d_model, d_model d_head -> batch seq d_head") + b_Q
+
+  elif act_name == "k":
+    W_K, b_K = model.W_K[head[0], head[1]], model.b_K[head[0], head[1]]
+    internal_value[..., head[1], :] = einops.einsum(normalized_resid, W_K, "batch seq d_model, d_model d_head -> batch seq d_head") + b_K
+
+def project_stuff_on_heads(project_heads, project_only = False, scale_proj = 1, output = "display_logits", freeze_ln = False, return_just_lds = False):
+
+    model.reset_hooks()
+    # project_heads is a list of tuples (layer, head). for each layer, write a hook which projects all the heads from the layer
+    for layer in range(model.cfg.n_layers):
+        key_heads = [head[1] for head in project_heads if head[0] == layer]
+        if len(key_heads) > 0:
+            #print(key_heads)
+            model.add_hook(utils.get_act_name("result", layer), partial(project_vector_operation, vector = target_intervene_direction, heads = key_heads, scale_proj = scale_proj, project_only = project_only))
+
+    if freeze_ln:
+        for layer in [9,10,11]:
+            model.add_hook("blocks." + str(layer) + ".ln1.hook_scale", patch_ln_scale)
+            model.add_hook("blocks." + str(layer) + ".ln2.hook_scale", patch_ln2_scale)
+        model.add_hook("ln_final.hook_scale", patch_last_ln)
+
+    hooked_logits, hooked_cache = model.run_with_cache(clean_tokens)
+    model.reset_hooks()
+    if output == "display_logits":
+        return display_all_logits(hooked_cache, comparison=True, logits = hooked_logits, title = f"Projecting {('only' if project_only else 'away')} IO direction in heads {project_heads}", include_incorrect=INCLUDE_INCORRECT)
+    elif output == "get_ldd":
+        a = calc_all_logit_contibutions(hooked_cache, include_incorrect=INCLUDE_INCORRECT)
+        ca = calc_all_logit_contibutions(clean_cache, include_incorrect=INCLUDE_INCORRECT)
+        if return_just_lds:
+          return a
+        else:
+          return a - ca
+        
+  
+# %%
+
+def run_interventions(return_just_lds = False):
+    target_heads = [(9,6), (9,9)]#, (10,0)]
+
+    
+    zero_ablate_all_heads_ldds = project_stuff_on_heads(target_heads, project_only = True, scale_proj = 0, output = "get_ldd", freeze_ln=ln_on, return_just_lds = return_just_lds)
+    project_only_io_direction = project_stuff_on_heads(target_heads, project_only = True, scale_proj = 1, output = "get_ldd", freeze_ln=ln_on, return_just_lds = return_just_lds)
+    project_away_io_direction = project_stuff_on_heads(target_heads, project_only = False, scale_proj = 1, output = "get_ldd", freeze_ln=ln_on, return_just_lds = return_just_lds)
+
+    
+    model.reset_hooks()
+
+    if ln_on:
+        for layer in [9,10,11]:
+            model.add_hook("blocks." + str(layer) + ".ln1.hook_scale", patch_ln_scale)
+            model.add_hook("blocks." + str(layer) + ".ln2.hook_scale", patch_ln2_scale)
+        model.add_hook("ln_final.hook_scale", patch_last_ln)
+
+    for head in target_heads:
+
+        # get the output of head on CORRUPTED RUN
+        W_O_temp = model.W_O[head[0], head[1]]
+        layer_z = corrupted_cache[utils.get_act_name("z", head[0])]
+        layer_result = einops.einsum(W_O_temp, layer_z, "d_head d_model, batch seq h_idx d_head -> batch seq h_idx d_model")
+        output_head = layer_result[:, -1, head[1], :]
+
+        # get projection of CORRUPTED HEAD OUTPUT onto IO token
+        corrupted_head_only_IO_output = get_projection(output_head, target_intervene_direction)
+
+        # add hook to now replace with this corrupted IO direction
+        model.add_hook(utils.get_act_name("result", head[0]), partial(project_away_component_and_replace_with_something_else, project_away_vector = target_intervene_direction, heads = [head[1]], replace_vector = corrupted_head_only_IO_output))
+
+    replace_with_new_IO_logits, replace_with_new_IO_cache = model.run_with_cache(clean_tokens)
+
+    model.reset_hooks()
+
+    model.reset_hooks()
+    if ln_on:
+        for layer in [9,10,11]:
+                    model.add_hook("blocks." + str(layer) + ".ln1.hook_scale", patch_ln_scale)
+                    model.add_hook("blocks." + str(layer) + ".ln2.hook_scale", patch_ln2_scale)
+
+    model.add_hook("ln_final.hook_scale", patch_last_ln)
+    for head in target_heads:
+
+        # get the output of head on CORRUPTED RUN
+        W_O_temp = model.W_O[head[0], head[1]]
+        layer_z = corrupted_cache[utils.get_act_name("z", head[0])]
+        layer_result = einops.einsum(W_O_temp, layer_z, "d_head d_model, batch seq h_idx d_head -> batch seq h_idx d_model")
+        output_head = layer_result[:, -1, head[1], :]
+
+
+        # get projection of CORRUPTED HEAD OUTPUT onto IO perp token
+        corrupted_head_only_IO_output = get_projection(output_head, target_intervene_direction)
+        everything_else_but_that = output_head - corrupted_head_only_IO_output
+
+        # add hook to now replace with this corrupted IO perp direction
+        model.add_hook(utils.get_act_name("result", head[0]), partial(project_away_component_and_replace_with_something_else, project_away_vector = target_intervene_direction, heads = [head[1]], replace_vector = everything_else_but_that, project_only = True))
+
+    replace_with_new_perp_IO_logits, replace_with_new_perp_IO_cache = model.run_with_cache(clean_tokens)
+
+
+
+    model.reset_hooks()
+
+    ca = calc_all_logit_contibutions(clean_cache)
+    if return_just_lds:
+      replace_all_IOs_ldds = calc_all_logit_contibutions(replace_with_new_IO_cache) - ca
+      replace_all_perp_IOs_ldds = calc_all_logit_contibutions(replace_with_new_perp_IO_cache) - ca
+      return [zero_ablate_all_heads_ldds, project_only_io_direction, replace_all_perp_IOs_ldds, project_away_io_direction, replace_all_IOs_ldds]
+    else:
+
+      replace_all_IOs_ldds = calc_all_logit_contibutions(replace_with_new_IO_cache)
+      replace_all_perp_IOs_ldds = calc_all_logit_contibutions(replace_with_new_perp_IO_cache)
+      return [zero_ablate_all_heads_ldds, project_only_io_direction, replace_all_perp_IOs_ldds, project_away_io_direction, replace_all_IOs_ldds]
+
+# %%
+third_intervention = run_interventions(return_just_lds = True)
+zero_ablate_all_heads_lds, project_only_io_direction_lds, replace_all_perp_IOs_lds, project_away_io_direction, replace_all_IOs_lds = third_intervention
+
+#per_head_logit_diff, ablated_logit_diff
+# %%
+fig = px.scatter()
+x =  per_head_logit_diff.flatten()
+
+# left
+
+fig.add_trace(go.Scatter(x = x.cpu(), y = zero_ablate_all_heads_lds.flatten().cpu(),  textposition="top center", mode = 'markers+text', name = "Zero Ablate Directions"))
+fig.add_trace(go.Scatter(x = x.cpu(), y = replace_all_perp_IOs_lds.flatten().cpu(),  textposition="top center", mode = 'markers+text', name = "Replace IO-Perp Directions"))
+fig.add_trace(go.Scatter(x = x.cpu(), y = project_only_io_direction_lds.flatten().cpu(),  textposition="top center", mode = 'markers+text', name = "Project IO-Only Directions"))
+fig.add_trace(go.Scatter(x = x.cpu(), y = project_away_io_direction.flatten().cpu(),  textposition="top center", mode = 'markers+text', name = "Project Away IO Directions"))
+fig.add_trace(go.Scatter(x = x.cpu(), y = replace_all_IOs_lds.flatten().cpu(),  textposition="top center", mode = 'markers+text', name = "Replace all IO Directions"))
+
+
+#x_range = np.linspace(start=min(fig.data[1].x) - 0.5, stop=max(fig.data[1].x) + 0.5, num=100)
+# right
+
+
+# on both
+#fig.add_trace(go.Scatter(x=x_range, y=x_range, mode='lines', name='y=x', line_color = "black", ))
+  #y =  ablated_logit_diff.flatten()
+  #fig.add_trace(go.Scatter(x = x.cpu(), y = y.cpu(),  textposition="top center", mode = 'markers+text', name = "sample ablated", marker=dict(color="purple")), row = 1, col = col)
+
+
+
+fig.update_xaxes(title = "Clean Direct Effect")
+fig.update_yaxes(title = "Ablated Direct Effect")
+fig.update_layout(title = "Logit Differences When Zero Ablating in Name Mover Heads", width = 950)
+fig.show()
+# %%
+# 
+def get_average_and_not_output_across_tasks(cache, layer, head) -> Float[Tensor, "pos d_model"]:
+    head_outs = cache[utils.get_act_name("z", layer)][..., head, :]
+    return head_outs.mean(0).to(device), head_outs.to(device)
+    
+
+# %% Major Idea. Mean Ablate all of these heads, and see if backup occurs. I don't know how I haven't tried this yet.
+model.reset_hooks()
+if ln_on:
+    for layer in [9,10,11]:
+                model.add_hook("blocks." + str(layer) + ".ln1.hook_scale", patch_ln_scale)
+                model.add_hook("blocks." + str(layer) + ".ln2.hook_scale", patch_ln2_scale)
+
+model.add_hook("ln_final.hook_scale", patch_last_ln)
+for head in [(9,6), (9,9)]:
+    # get the average output of head
+    W_O_temp = model.W_O[head[0], head[1]]
+    layer_z, clean_outputs = get_average_and_not_output_across_tasks(clean_cache, head[0], head[1])
+    
+    head_result = einops.einsum(W_O_temp, layer_z, "d_head d_model, seq d_head ->  seq d_model")[-1]
+    head_result = einops.repeat(head_result, "d_model -> batch d_model", batch = clean_tokens.shape[0])
+
+
+    clean_outputs = clean_outputs[:, -1, :]
+    clean_outputs = einops.einsum(W_O_temp, clean_outputs, "d_head d_model, seq d_head ->  seq d_model")
+
+    # get projection of CORRUPTED HEAD OUTPUT onto IO perp token
+    # corrupted_head_only_IO_output = get_projection(output_head, target_intervene_direction)
+    # everything_else_but_that = output_head - corrupted_head_only_IO_output
+
+    # add hook to now replace with this corrupted IO perp direction
+    print(clean_outputs.shape)
+    print(head_result.shape)
+    model.add_hook(utils.get_act_name("result", head[0]), partial(project_away_component_and_replace_with_something_else, project_away_vector = clean_outputs, heads = [head[1]], replace_vector = head_result, project_only = False))
+
+replace_with_new_perp_IO_logits, replace_with_new_perp_IO_cache = model.run_with_cache(clean_tokens)
+model.reset_hooks()
+
+ca = calc_all_logit_contibutions(clean_cache)
+replace_all_perp_IOs_logit_contributions = calc_all_logit_contibutions(replace_with_new_perp_IO_cache)
+display_all_logits(replace_with_new_perp_IO_cache, comparison = True, title = f"Logit Diff Diff from mean Ablating in heads 9.6 and 9.9", include_incorrect=INCLUDE_INCORRECT)
+# %% Try adding back in the IO directions into the sample ablated stuff?
+
+
+model.reset_hooks()
+if ln_on:
+    for layer in [9,10,11]:
+                model.add_hook("blocks." + str(layer) + ".ln1.hook_scale", patch_ln_scale)
+                model.add_hook("blocks." + str(layer) + ".ln2.hook_scale", patch_ln2_scale)
+
+model.add_hook("ln_final.hook_scale", patch_last_ln)
+for head in [(9,6), (9,9)]:
+    # get the average output of head
+    W_O_temp = model.W_O[head[0], head[1]]
+    layer_z, clean_outputs = get_average_and_not_output_across_tasks(clean_cache, head[0], head[1])
+    
+    head_result = einops.einsum(W_O_temp, layer_z, "d_head d_model, seq d_head ->  seq d_model")[-1]
+    head_result = einops.repeat(head_result, "d_model -> batch d_model", batch = clean_tokens.shape[0])
+
+
+    clean_outputs = clean_outputs[:, -1, :]
+    clean_outputs = einops.einsum(W_O_temp, clean_outputs, "d_head d_model, seq d_head ->  seq d_model")
+
+    # get projection of CORRUPTED HEAD OUTPUT onto IO perp token
+    # corrupted_head_only_IO_output = get_projection(output_head, target_intervene_direction)
+    # everything_else_but_that = output_head - corrupted_head_only_IO_output
+
+    # add hook to now replace with this corrupted IO perp direction
+    print(clean_outputs.shape)
+    print(head_result.shape)
+    model.add_hook(utils.get_act_name("result", head[0]), partial(project_away_component_and_replace_with_something_else, project_away_vector = clean_outputs, heads = [head[1]], replace_vector = head_result + 4*unembed_io_directions, project_only = False))
+
+replace_with_new_perp_IO_logits, replace_with_new_perp_IO_cache = model.run_with_cache(clean_tokens)
+model.reset_hooks()
+
+ca = calc_all_logit_contibutions(clean_cache)
+replace_all_perp_IOs_logit_contributions = calc_all_logit_contibutions(replace_with_new_perp_IO_cache)
+display_all_logits(replace_with_new_perp_IO_cache, comparison = True, title = f"Logit Diff Diff from Mean Ablating, plus IO unembeddings, in heads 9.6 and 9.9", include_incorrect=INCLUDE_INCORRECT)
+# %% it appears that adding the IO direction causes the backup heads to change the amount of backup they show. lets actually test this out further
+
+io_scaling = [0.1 * i for i in range(-70,70,1)]
+heads_to_graph = [(10,7), (10,2)]
+head_changed_outputs_to_io_direction = torch.zeros((len(heads_to_graph), len(io_scaling)))
+
+
+# generate a random vector that is the same size as unembed_io_directions
+random_vector = torch.randn(unembed_io_directions.shape).to(device) * 10
+# make it the same length as unembed_io_direction
+random_vector = random_vector / torch.norm(random_vector, dim = -1, keepdim = True) * torch.norm(unembed_io_directions, dim = -1, keepdim = True)
+
+for scaling in io_scaling:
+    model.reset_hooks()
+    if ln_on:
+        for layer in [9,10,11]:
+                    model.add_hook("blocks." + str(layer) + ".ln1.hook_scale", patch_ln_scale)
+                    model.add_hook("blocks." + str(layer) + ".ln2.hook_scale", patch_ln2_scale)
+
+    model.add_hook("ln_final.hook_scale", patch_last_ln)
+    for head in [(9,6), (9,9)]:
+        # get the average output of head
+        W_O_temp = model.W_O[head[0], head[1]]
+        layer_z, clean_outputs = get_average_and_not_output_across_tasks(clean_cache, head[0], head[1])
+        
+        head_result = einops.einsum(W_O_temp, layer_z, "d_head d_model, seq d_head ->  seq d_model")[-1]
+        head_result = einops.repeat(head_result, "d_model -> batch d_model", batch = clean_tokens.shape[0])
+
+
+        clean_outputs = clean_outputs[:, -1, :]
+        clean_outputs = einops.einsum(W_O_temp, clean_outputs, "d_head d_model, seq d_head ->  seq d_model")
+
+        # get projection of CORRUPTED HEAD OUTPUT onto IO perp token
+        # corrupted_head_only_IO_output = get_projection(output_head, target_intervene_direction)
+        # everything_else_but_that = output_head - corrupted_head_only_IO_output
+
+        # add hook to now replace with this corrupted IO perp direction
+    
+        
+        model.add_hook(utils.get_act_name("result", head[0]), partial(project_away_component_and_replace_with_something_else, project_away_vector = clean_outputs, heads = [head[1]], replace_vector = head_result + head_result * unembed_io_directions, project_only = False))
+
+    replace_with_new_perp_IO_logits, replace_with_new_perp_IO_cache = model.run_with_cache(clean_tokens)
+    model.reset_hooks()
+
+    ca = calc_all_logit_contibutions(clean_cache, per_prompt=True, include_incorrect=INCLUDE_INCORRECT)
+    replace_all_perp_IOs_logit_contributions = calc_all_logit_contibutions(replace_with_new_perp_IO_cache, per_prompt=True, include_incorrect=INCLUDE_INCORRECT)
+
+    for index, head in enumerate(heads_to_graph):
+        head_changed_outputs_to_io_direction[index, io_scaling.index(scaling)] = replace_all_perp_IOs_logit_contributions[head[0], head[1]].mean(0) - ca[head[0], head[1]].mean(0)
+# %%
+
+
+fig = go.Figure()
+x = io_scaling
+
+for head in heads_to_graph:
+    fig.add_trace(go.Scatter(x = x, y = head_changed_outputs_to_io_direction[heads_to_graph.index(head)], mode = 'lines', name = f"Head {head}"))
+
+fig.update_xaxes(title = "Scaling of Direction")
+fig.update_yaxes(title = "Logit Contribution Difference")
+fig.update_layout(
+    title = "Logit Contribution Difference when Sample Ablating 9.6 and 9.9 while also adding the mean direction to their output"
+)
+fig.show()
 
 
 # %%
