@@ -1,4 +1,5 @@
 # %%
+import plotly
 import plotly.express as px
 import math
 import torch
@@ -12,7 +13,7 @@ import numpy as np
 import pandas as pd
 import einops
 from fancy_einsum import einsum
-import tqdm.auto as tqdm
+from tqdm import tqdm
 import random
 from pathlib import Path
 # import plotly.express as px
@@ -37,7 +38,6 @@ from transformer_lens.hook_points import (
 )  # Hooking utilities
 from transformer_lens import HookedTransformer, HookedTransformerConfig, FactoredMatrix, ActivationCache, patching
 
-import plotly
 import circuitsvis as cv
 import os, sys
 
@@ -73,7 +73,6 @@ from path_patching import Node, IterNode, path_patch, act_patch
 
 
 from neel_plotly import imshow, line, scatter, histogram
-import tqdm
 torch.set_grad_enabled(False)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 

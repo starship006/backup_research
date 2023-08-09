@@ -9,9 +9,7 @@ This file extends upon the Backup tooling to view how backup accurs across the d
 #from TransformerLens import transformer_lens
 from imports import *
 
-# %%
 
-?ActivationCache
 # %%
 model_name = "gpt2-small"
 #backup_storage_file_name = model_name + "_new_backup_count_storage.pickle"
@@ -25,8 +23,8 @@ model = HookedTransformer.from_pretrained(
 )
 # %% Dataest
 owt_dataset = utils.get_dataset("owt")
-BATCH_SIZE = 140
-PROMPT_LEN = 50
+BATCH_SIZE = 40
+PROMPT_LEN = 20
 
 all_owt_tokens = model.to_tokens(owt_dataset[0:BATCH_SIZE * 2]["text"]).to(device)
 owt_tokens = all_owt_tokens[0:BATCH_SIZE][:, :PROMPT_LEN]
@@ -36,6 +34,7 @@ assert owt_tokens.shape == corrupted_owt_tokens.shape == (BATCH_SIZE, PROMPT_LEN
 # %%
 
 torch.cuda.empty_cache()
+model.set_use_attn_result(True)
 
 # %%
 
@@ -355,8 +354,8 @@ for layer, head in pairs_of_head_backup.keys():
 def create_scatter_of_backup_of_component(heads = None, mlp_layers = None, return_slope = False):
     """"
     this function:
-    1) gets the direct effect of all the heads when sample ablating the input head
-    2) gets the total accumulated backup of the head for each prompt and position
+    1) gets the direct effect of all a component when sample ablating it
+    2) gets the total accumulated backup of the component for each prompt and position
     3) plots the clean direct effect vs accumulated backup
 
     heads: list of tuples of (layer, head) to ablate
@@ -468,6 +467,8 @@ create_scatter_of_backup_of_component(mlp_layers = [4])
 # %%
 create_scatter_of_backup_of_component(heads = [(9,6)])
 # %%
+
+
 def get_backup_per_head(topk_prompts = 0):
     """
     gets the downstream accumulated backup when ablating a head
@@ -511,6 +512,8 @@ def get_backup_per_head(topk_prompts = 0):
     
     return total_accumulated_backup_per_head, average_clean_logit_diff
 # %%
+
+
 def plot_accumulated_backup_per_head(top_k_to_isolate, total_accumulated_backup_per_head, direct_clean_effect_per_head):
     fig = go.Figure()
     colors = ['rgb(0, 0, 0)'] * model.cfg.n_layers * model.cfg.n_heads  # Initialize with black color
@@ -527,12 +530,12 @@ def plot_accumulated_backup_per_head(top_k_to_isolate, total_accumulated_backup_
         colors[start_index:end_index] = [color] * group_size
 
     scatter_plot = go.Scatter(
-    x = direct_clean_effect_per_head.flatten().cpu(),
-    y = total_accumulated_backup_per_head.flatten().cpu(),
-    text=[f"Layer {i[0]}, Head {i[1]}" for i in itertools.product(range(model.cfg.n_layers), range(model.cfg.n_heads))],  # Set the hover labels to the text attribute
-    mode='markers',
-    marker=dict(size=10, color=colors, opacity=0.8),
-)
+        x = direct_clean_effect_per_head.flatten().cpu(),
+        y = total_accumulated_backup_per_head.flatten().cpu(),
+        text=[f"Layer {i[0]}, Head {i[1]}" for i in itertools.product(range(model.cfg.n_layers), range(model.cfg.n_heads))],  # Set the hover labels to the text attribute
+        mode='markers',
+        marker=dict(size=10, color=colors, opacity=0.8),
+    )
     fig.add_trace(scatter_plot)
     fig.update_layout(
 
@@ -549,7 +552,8 @@ top_k_to_isolate = 40
 total_accumulated_backup_per_head, direct_clean_effect_per_head = get_backup_per_head(top_k_to_isolate)
 # %% Plot the results:
 plot_accumulated_backup_per_head(top_k_to_isolate, total_accumulated_backup_per_head, direct_clean_effect_per_head)
-# %%
+
+
 def get_backup_per_layer(topk_prompts = 0):
     """
     gets the downstream accumulated backup when ablating an mlp layer
@@ -589,10 +593,10 @@ def get_backup_per_layer(topk_prompts = 0):
         
         
         total_accumulated_backup_per_head[layer] = backup_amount
-    
+
     return total_accumulated_backup_per_head, average_clean_logit_diff
 
-def plot_accumulated_backup_per_head(top_k_to_isolate, total_accumulated_backup_per_head, direct_clean_effect_per_head):
+def plot_accumulated_backup_per_layer(top_k_to_isolate, total_accumulated_backup_per_head, direct_clean_effect_per_head):
     fig = go.Figure()
     colors = ['rgb(0, 0, 0)'] * model.cfg.n_layers   # Initialize with black color
     group_size = 1
@@ -608,12 +612,12 @@ def plot_accumulated_backup_per_head(top_k_to_isolate, total_accumulated_backup_
         colors[start_index:end_index] = [color] * group_size
 
     scatter_plot = go.Scatter(
-    x = direct_clean_effect_per_head.flatten().cpu(),
-    y = total_accumulated_backup_per_head.flatten().cpu(),
-    text=[f"Layer {i[0]}, Head {i[1]}" for i in itertools.product(range(model.cfg.n_layers), range(model.cfg.n_heads))],  # Set the hover labels to the text attribute
-    mode='markers',
-    marker=dict(size=10, color=colors, opacity=0.8),
-)
+        x = direct_clean_effect_per_head.flatten().cpu(),
+        y = total_accumulated_backup_per_head.flatten().cpu(),
+        text=[f"Layer {i[0]}, Head {i[1]}" for i in itertools.product(range(model.cfg.n_layers), range(model.cfg.n_heads))],  # Set the hover labels to the text attribute
+        mode='markers',
+        marker=dict(size=10, color=colors, opacity=0.8),
+    )
     fig.add_trace(scatter_plot)
     fig.update_layout(
 
@@ -631,7 +635,7 @@ top_k_to_isolate = 40
 total_accumulated_backup_per_layer, direct_clean_effect_per_layer = get_backup_per_layer(top_k_to_isolate)
 
 # %%
-plot_accumulated_backup_per_head(top_k_to_isolate, total_accumulated_backup_per_layer, direct_clean_effect_per_layer)
+plot_accumulated_backup_per_layer(top_k_to_isolate, total_accumulated_backup_per_layer, direct_clean_effect_per_layer)
 
 # %%
 slopes_of_head_backup = torch.zeros((12,12))
@@ -644,4 +648,96 @@ for layer in tqdm.tqdm(range(model.cfg.n_layers)):
 imshow(slopes_of_head_backup, title = "Slopes of Head Backup",
        text_auto = True, width = 800, height = 800)# show a number above each square)
 
+# %%
+
+
+def get_backup_per_neuron(topk_prompts = 0):
+    """
+    gets the downstream accumulated backup when ablating a neuron
+    by default, this operates across all prompts: if topk_prompts > 0, it isolates the top_k prompts where 
+    the neuron has the highest direct effect
+
+    also returns the clean logit diffs (either across all prompts, or on all top_k ones)
+    """
+    total_accumulated_backup_per_neuron = torch.zeros((model.cfg.n_layers, model.cfg.d_mlp))
+    average_clean_logit_diff = torch.zeros((model.cfg.n_layers, model.cfg.d_mlp))
+    
+    total_iterations = model.cfg.n_layers * model.cfg.d_mlp
+    print("Starting to iterate")
+    pbar = tqdm.tqdm(total=total_iterations)
+    for layer in range(model.cfg.n_layers):
+        for neuron in range(model.cfg.d_mlp):
+            if topk_prompts > 0:
+                neuron_direct_effects = per_neuron_direct_effect[layer, neuron]
+                top_indices = topk_of_Nd_tensor(neuron_direct_effects, topk_prompts)
+                # set average_clean_logit_diff
+                #print(top_indices)
+                average_clean_logit_diff[layer, neuron] = sum(per_neuron_direct_effect[layer, neuron, batch, pos].item() for batch, pos in top_indices) / topk_prompts
+            else:
+                average_clean_logit_diff[layer, neuron] = per_neuron_direct_effect[layer].mean((0,1)).item()
+
+            ablated_per_head_batch_direct_effect, ablated_per_mlp_layer_direct_effect = dir_effects_from_sample_ablating(neurons = [(layer, neuron)])
+            downstream_change_in_logit_diff: Float[Tensor, "layer head batch pos"] = ablated_per_head_batch_direct_effect - per_head_direct_effect
+            downstream_change_in_mlp_logit_diff: Float[Tensor, "layer batch pos"] = ablated_per_mlp_layer_direct_effect - all_layer_direct_effect
+            
+            if topk_prompts > 0:
+                backup_amount = 0.0
+
+                backup_amount = sum(downstream_change_in_logit_diff[(layer+1):, :, batch, pos].sum((0,1)).item() + downstream_change_in_mlp_logit_diff[(layer+1):, batch, pos].sum().item() for batch, pos in top_indices) / topk_prompts
+
+            else:
+                # use all batch and prompts
+                backup_amount = downstream_change_in_logit_diff[(layer+1):].mean((0,1,2,3)).item() + downstream_change_in_mlp_logit_diff[(layer+1):].mean((0,1,2)).item()
+            
+            
+            total_accumulated_backup_per_neuron[layer, neuron] = backup_amount
+            pbar.update(1)
+
+    return total_accumulated_backup_per_neuron, average_clean_logit_diff
+# %%
+
+def plot_accumulated_backup_per_neuron(top_k_to_isolate, total_accumulated_backup_per_head, direct_clean_effect_per_head):
+    fig = go.Figure()
+    colors = ['rgb(0, 0, 0)'] * model.cfg.n_layers * model.cfg.d_mlp  # Initialize with black color
+    group_size = model.cfg.d_mlp
+    num_groups = model.cfg.n_layers * model.cfg.d_mlp // group_size
+    color_step = 255 / num_groups
+    for i in range(num_groups):
+        start_index = i * group_size
+        end_index = (i + 1) * group_size
+        r = int(i * color_step)
+        g = int(i * color_step)
+        b = int(i * color_step / 10)
+        color = f'rgb({r}, {g}, {b})'
+        colors[start_index:end_index] = [color] * group_size
+
+    scatter_plot = go.Scatter(
+        x = direct_clean_effect_per_head.flatten().cpu(),
+        y = total_accumulated_backup_per_head.flatten().cpu(),
+        text=[f"Layer {i[0]}, Neuron {i[1]}" for i in itertools.product(range(model.cfg.n_layers), range(model.cfg.d_mlp))],  # Set the hover labels to the text attribute
+        mode='markers',
+        marker=dict(size=10, color=colors, opacity=0.8),
+    )
+    fig.add_trace(scatter_plot)
+    fig.update_layout(
+
+        title=f"Total Accumulated Backup of Neuron on top {(str(round(top_k_to_isolate / (BATCH_SIZE * (PROMPT_LEN - 1)) * 100, 2)) +'%') if top_k_to_isolate != 0 else 'All'}"
+        + " Prompts vs. Average Direct Effect of Neurons",
+        width = 1000
+    )
+    fig.update_xaxes(title = "Average Direct Effect of Neuron")
+    fig.update_yaxes(title = "Total Accumulated Backup")
+    fig.show()
+
+
+
+# %%
+top_accumulated_backup_per_neuron, average_clean_logit_diff_per_neuron = get_backup_per_neuron(topk_prompts = 10)
+# %%
+
+# save with pickle
+with open(f"backup_per_neuron_{model_name}.pkl", "wb") as f:
+    pickle.dump(top_accumulated_backup_per_neuron, f)
+# %%
+plot_accumulated_backup_per_neuron(10, top_accumulated_backup_per_neuron, average_clean_logit_diff_per_neuron)
 # %%
