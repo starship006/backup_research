@@ -716,7 +716,7 @@ def logits_to_ave_logit_diff(
     logits: Float[Tensor, "batch seq d_vocab"],
     answer_tokens: Float[Tensor, "batch 1"] = answer_tokens,
     per_prompt: bool = False,
-    include_incorrect = False,
+    include_incorrect = INCLUDE_INCORRECT,
     full_answers = full_answer_tokens,
 ):
     '''
@@ -749,6 +749,7 @@ def final_logit_to_probabilities( logits: Float[Tensor, "batch seq d_vocab"],
     '''
     Returns logit contributions to the correct answers
     '''
+    return ("error not ready")
     # Only the final logits are relevant for the answer
     final_logits: Float[Tensor, "batch d_vocab"] = logits[:, -1, :]
     # Convert to probabilities
@@ -762,7 +763,7 @@ def residual_stack_to_logit_diff(
     cache_for_ln: ActivationCache = clean_cache,
     logit_directions: Float[Tensor, "batch d_model"] = logit_directions,
     per_prompt = False,
-    include_incorrect = False,
+    include_incorrect = INCLUDE_INCORRECT,
     logit_diff_directions = logit_diff_directions,
 
 ) -> Float[Tensor, "..."]:
@@ -785,7 +786,7 @@ def residual_stack_to_logit_diff(
             "... batch d_model, batch d_model -> ..."
         ) / batch_size
 
-def calc_all_logit_contibutions(cache, per_prompt = False, include_incorrect = False) -> Float[Tensor, "layer head"]:
+def calc_all_logit_contibutions(cache, per_prompt = False, include_incorrect = INCLUDE_INCORRECT) -> Float[Tensor, "layer head"]:
   clean_per_head_residual, labels = cache.stack_head_results(layer = -1, return_labels = True, apply_ln = False) # per_head_residual.shape = heads batch seq_pos d_model
   # also, for the worried, no, we're not missing the application of LN here since it gets applied in the below function call
   per_head_logit_diff: Float[Tensor, "batch head"] = residual_stack_to_logit_diff(clean_per_head_residual[:, :, -1, :], clean_cache, per_prompt=per_prompt, include_incorrect=include_incorrect)
@@ -795,10 +796,11 @@ def calc_all_logit_contibutions(cache, per_prompt = False, include_incorrect = F
       "(layer head) ... -> layer head ...",
       layer=model.cfg.n_layers
   )
+  print(per_head_logit_diff[3])
   return per_head_logit_diff
 
 def display_all_logits(cache = None, per_head_ld = None, title = "Logit Contributions", comparison = False,
-                        return_fig = False, logits = None, include_incorrect = False):
+                        return_fig = False, logits = None, include_incorrect = INCLUDE_INCORRECT):
     """
     given an input, display the logit contributions of each head
 
@@ -888,7 +890,7 @@ def dir_effects_from_sample_ablating_head(ablate_heads):
     return new_cache
 
 
-def dir_effects_from_path_patching_into_head(ablate_heads, method = "sample", include_incorrect = False) -> Float[Tensor, "layer head batch"]:
+def dir_effects_from_path_patching_into_head(ablate_heads, method = "sample", include_incorrect = INCLUDE_INCORRECT) -> Float[Tensor, "layer head batch"]:
     """this function gets the new direct effect of all the heads when path patching into downstream heads
     via sample ablations 
     it uses the global cache, owt_tokens, corrupted_owt_tokens
@@ -912,7 +914,7 @@ def dir_effects_from_path_patching_into_head(ablate_heads, method = "sample", in
     return results
 
 # %%
-def path_patch_to_and_display(heads, include_incorrect = False):
+def path_patch_to_and_display(heads, include_incorrect = INCLUDE_INCORRECT):
     path_patch_from_results = dir_effects_from_path_patching_into_head(heads, include_incorrect=include_incorrect)
     display_all_logits(per_head_ld = path_patch_from_results, comparison=True, title = f"Logit Diff Diff of each Head upon Noisily Path Patching into Query from {heads} in {model_name}", include_incorrect=include_incorrect)
 
@@ -926,7 +928,7 @@ display_all_logits(dir_effects_from_sample_ablating_head([[9,6], [9,9]]), title 
 
 
 # %% function that looks at the backup activation on a specific prompt
-def backup_activation_on_prompt(prompt_index, cache = None, per_head_contribution = None, include_incorrect = False):
+def backup_activation_on_prompt(prompt_index, cache = None, per_head_contribution = None, include_incorrect = INCLUDE_INCORRECT):
     prompt = PROMPTS[prompt_index]
     answer = ANSWERS[prompt_index]
     if cache is not None and per_head_contribution is not None:
@@ -946,7 +948,7 @@ new_cache = dir_effects_from_sample_ablating_head([[9,6]])
 backup_activation_on_prompt(2, new_cache, include_incorrect=INCLUDE_INCORRECT)
 # %%
 
-def show_per_prompt_activation_sliders(heads, include_incorrect = False):
+def show_per_prompt_activation_sliders(heads, include_incorrect = INCLUDE_INCORRECT):
     # calculate the new per_head_logit_diff for ablating each head
     per_head_logit_diffs = []
     for head in heads:
@@ -1088,12 +1090,12 @@ def project_away_component_and_replace_with_something_else(
 ) -> Float[Tensor, "batch n_head pos pos"]:
     '''
     Function which gets removes a specific component (or keeps only it, if project_only = True) of the an output of a head and replaces it with another vector
+    project_only: if true, then instead of projecting away the vector, it keeps only it
     '''
     # right now this projects away the IO direction!
     assert project_away_vector.shape == replace_vector.shape and len(project_away_vector.shape) == 2
 
     for head in heads:
-
         head_output = original_resid_out[:, position, head, :]
         projections = get_projection(head_output, project_away_vector)
 
@@ -1213,6 +1215,9 @@ def project_stuff_on_heads(project_heads, project_only = False, scale_proj = 1, 
 # %%
 
 def run_interventions(return_just_lds = False):
+    """
+    return_just_lds: whether or not to return logit contributions/diffs (if True), or if to return logit diff diffs (if False)
+    """
     target_heads = [(9,6), (9,9)]#, (10,0)]
 
     
@@ -1220,7 +1225,6 @@ def run_interventions(return_just_lds = False):
     project_only_io_direction = project_stuff_on_heads(target_heads, project_only = True, scale_proj = 1, output = "get_ldd", freeze_ln=ln_on, return_just_lds = return_just_lds)
     project_away_io_direction = project_stuff_on_heads(target_heads, project_only = False, scale_proj = 1, output = "get_ldd", freeze_ln=ln_on, return_just_lds = return_just_lds)
 
-    
     model.reset_hooks()
 
     if ln_on:
@@ -1243,19 +1247,18 @@ def run_interventions(return_just_lds = False):
         # add hook to now replace with this corrupted IO direction
         model.add_hook(utils.get_act_name("result", head[0]), partial(project_away_component_and_replace_with_something_else, project_away_vector = target_intervene_direction, heads = [head[1]], replace_vector = corrupted_head_only_IO_output))
 
-    replace_with_new_IO_logits, replace_with_new_IO_cache = model.run_with_cache(clean_tokens)
+    _, replace_with_new_IO_cache = model.run_with_cache(clean_tokens)
 
     model.reset_hooks()
 
-    model.reset_hooks()
     if ln_on:
         for layer in [9,10,11]:
                     model.add_hook("blocks." + str(layer) + ".ln1.hook_scale", patch_ln_scale)
                     model.add_hook("blocks." + str(layer) + ".ln2.hook_scale", patch_ln2_scale)
-
-    model.add_hook("ln_final.hook_scale", patch_last_ln)
+        model.add_hook("ln_final.hook_scale", patch_last_ln)
+    
     for head in target_heads:
-
+        print(head)
         # get the output of head on CORRUPTED RUN
         W_O_temp = model.W_O[head[0], head[1]]
         layer_z = corrupted_cache[utils.get_act_name("z", head[0])]
@@ -1270,21 +1273,19 @@ def run_interventions(return_just_lds = False):
         # add hook to now replace with this corrupted IO perp direction
         model.add_hook(utils.get_act_name("result", head[0]), partial(project_away_component_and_replace_with_something_else, project_away_vector = target_intervene_direction, heads = [head[1]], replace_vector = everything_else_but_that, project_only = True))
 
-    replace_with_new_perp_IO_logits, replace_with_new_perp_IO_cache = model.run_with_cache(clean_tokens)
-
-
-
+    _, replace_with_new_perp_IO_cache = model.run_with_cache(clean_tokens)
     model.reset_hooks()
 
-    ca = calc_all_logit_contibutions(clean_cache)
+    print("-----")
+    ca = calc_all_logit_contibutions(clean_cache, include_incorrect=INCLUDE_INCORRECT)
+
     if return_just_lds:
-      replace_all_IOs_ldds = calc_all_logit_contibutions(replace_with_new_IO_cache) - ca
-      replace_all_perp_IOs_ldds = calc_all_logit_contibutions(replace_with_new_perp_IO_cache) - ca
+      replace_all_IOs_ldds = calc_all_logit_contibutions(replace_with_new_IO_cache, include_incorrect=INCLUDE_INCORRECT)
+      replace_all_perp_IOs_ldds = calc_all_logit_contibutions(replace_with_new_perp_IO_cache, include_incorrect=INCLUDE_INCORRECT)
       return [zero_ablate_all_heads_ldds, project_only_io_direction, replace_all_perp_IOs_ldds, project_away_io_direction, replace_all_IOs_ldds]
     else:
-
-      replace_all_IOs_ldds = calc_all_logit_contibutions(replace_with_new_IO_cache)
-      replace_all_perp_IOs_ldds = calc_all_logit_contibutions(replace_with_new_perp_IO_cache)
+      replace_all_IOs_ldds = calc_all_logit_contibutions(replace_with_new_IO_cache, include_incorrect=INCLUDE_INCORRECT)  - ca
+      replace_all_perp_IOs_ldds = calc_all_logit_contibutions(replace_with_new_perp_IO_cache, include_incorrect=INCLUDE_INCORRECT)  - ca
       return [zero_ablate_all_heads_ldds, project_only_io_direction, replace_all_perp_IOs_ldds, project_away_io_direction, replace_all_IOs_ldds]
 
 # %%
@@ -1296,21 +1297,31 @@ zero_ablate_all_heads_lds, project_only_io_direction_lds, replace_all_perp_IOs_l
 fig = px.scatter()
 x =  per_head_logit_diff.flatten()
 
+heads_to_name =  [(10,0), (10,7), (9,9), (9,6), (11,10), (11,2)]
+fig_names = [str((i,j)) for i in range(12) for j in range(12)]
+for i in range(12):
+  for j in range(12):
+    if fig_names[i * 12 + j] not in [str(i) for i in heads_to_name]:
+      fig_names[i * 12 + j] = None
+    else:
+      fig_names[i * 12 + j] = str(i) + "." + str(j)
+
+
+
 # left
 
-fig.add_trace(go.Scatter(x = x.cpu(), y = zero_ablate_all_heads_lds.flatten().cpu(),  textposition="top center", mode = 'markers+text', name = "Zero Ablate Directions"))
-fig.add_trace(go.Scatter(x = x.cpu(), y = replace_all_perp_IOs_lds.flatten().cpu(),  textposition="top center", mode = 'markers+text', name = "Replace IO-Perp Directions"))
-fig.add_trace(go.Scatter(x = x.cpu(), y = project_only_io_direction_lds.flatten().cpu(),  textposition="top center", mode = 'markers+text', name = "Project IO-Only Directions"))
-fig.add_trace(go.Scatter(x = x.cpu(), y = project_away_io_direction.flatten().cpu(),  textposition="top center", mode = 'markers+text', name = "Project Away IO Directions"))
-fig.add_trace(go.Scatter(x = x.cpu(), y = replace_all_IOs_lds.flatten().cpu(),  textposition="top center", mode = 'markers+text', name = "Replace all IO Directions"))
+fig.add_trace(go.Scatter(x = x.cpu(), y = zero_ablate_all_heads_lds.flatten().cpu(), text = fig_names ,textposition="top center", mode = 'markers+text', name = "Zero Ablate Directions"))
+fig.add_trace(go.Scatter(x = x.cpu(), y = replace_all_perp_IOs_lds.flatten().cpu(),  text = fig_names ,textposition="top center", mode = 'markers+text', name = "Replace All IO-Perp Directions"))
+fig.add_trace(go.Scatter(x = x.cpu(), y = project_only_io_direction_lds.flatten().cpu(), text = fig_names , textposition="top center", mode = 'markers+text', name = "Project Only IO Directions"))
+fig.add_trace(go.Scatter(x = x.cpu(), y = project_away_io_direction.flatten().cpu(),  text = fig_names ,textposition="top center", mode = 'markers+text', name = "Project Away IO Directions"))
+fig.add_trace(go.Scatter(x = x.cpu(), y = replace_all_IOs_lds.flatten().cpu(), text = fig_names , textposition="top center", mode = 'markers+text', name = "Replace All IO Directions"))
 
-
-#x_range = np.linspace(start=min(fig.data[1].x) - 0.5, stop=max(fig.data[1].x) + 0.5, num=100)
+x_range = np.linspace(start=min(fig.data[1].x) - 0.5, stop=max(fig.data[1].x) + 0.5, num=100)
 # right
 
 
 # on both
-#fig.add_trace(go.Scatter(x=x_range, y=x_range, mode='lines', name='y=x', line_color = "black", ))
+fig.add_trace(go.Scatter(x=x_range, y=x_range, mode='lines', name='y=x', line_color = "black", ))
   #y =  ablated_logit_diff.flatten()
   #fig.add_trace(go.Scatter(x = x.cpu(), y = y.cpu(),  textposition="top center", mode = 'markers+text', name = "sample ablated", marker=dict(color="purple")), row = 1, col = col)
 
