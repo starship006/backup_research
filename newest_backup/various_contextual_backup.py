@@ -796,7 +796,6 @@ def calc_all_logit_contibutions(cache, per_prompt = False, include_incorrect = I
       "(layer head) ... -> layer head ...",
       layer=model.cfg.n_layers
   )
-  print(per_head_logit_diff[3])
   return per_head_logit_diff
 
 def display_all_logits(cache = None, per_head_ld = None, title = "Logit Contributions", comparison = False,
@@ -1145,43 +1144,44 @@ def patch_ln2_scale(ln_scale, hook):
   ln_scale = clean_cache["blocks." + str(hook.layer()) + ".ln2.hook_scale"]
   return ln_scale
 
-def kq_rewrite_hook(
-    internal_value: Float[Tensor, "batch seq head d_head"],
-    hook: HookPoint,
-    head,
-    unnormalized_resid:  Float[Tensor, "batch seq d_model"],
-    vector,
-    act_name,
-    scale = 1,
-    position = -1,
-    pre_ln = True
-):
-  """
-  replaces keys or queries with a new result which we get from adding a vector to a position at the residual stream
-  head: tuple for head to rewrite keys for
-  unnormalized_resid: stored unnormalized residual stream needed to recalculated activations
-  """
+# def kq_rewrite_hook(
+#     internal_value: Float[Tensor, "batch seq head d_head"],
+#     hook: HookPoint,
+#     head,
+#     unnormalized_resid:  Float[Tensor, "batch seq d_model"],
+#     vector,
+#     act_name,
+#     scale = 1,
+#     position = -1,
+#     pre_ln = True
+# ):
+#   """
+#   replaces keys or queries with a new result which we get from adding a vector to a position at the residual stream
+#   head: tuple for head to rewrite keys for
+#   unnormalized_resid: stored unnormalized residual stream needed to recalculated activations
+#   """
 
-  ln1 = model.blocks[hook.layer()].ln1
-  temp_resid = unnormalized_resid.clone()
+#   print("intervening in query/key")
+#   ln1 = model.blocks[hook.layer()].ln1
+#   temp_resid = unnormalized_resid.clone()
 
-  if pre_ln:
-    temp_resid[:, position, :] = temp_resid[:, position, :] + scale * vector
-    normalized_resid = ln1(temp_resid)
-  else:
-    temp_resid = ln1(temp_resid)
-    temp_resid[:, position, :] = temp_resid[:, position, :] + scale * vector
-    normalized_resid = temp_resid
+#   if pre_ln:
+#     temp_resid[:, position, :] = temp_resid[:, position, :] + scale * vector
+#     normalized_resid = ln1(temp_resid)
+#   else:
+#     temp_resid = ln1(temp_resid)
+#     temp_resid[:, position, :] = temp_resid[:, position, :] + scale * vector
+#     normalized_resid = temp_resid
 
 
-  assert act_name == "q" or act_name == "k"
-  if act_name == "q":
-    W_Q, b_Q = model.W_Q[head[0], head[1]], model.b_Q[head[0], head[1]]
-    internal_value[..., head[1], :] = einops.einsum(normalized_resid, W_Q, "batch seq d_model, d_model d_head -> batch seq d_head") + b_Q
+#   assert act_name == "q" or act_name == "k"
+#   if act_name == "q":
+#     W_Q, b_Q = model.W_Q[head[0], head[1]], model.b_Q[head[0], head[1]]
+#     internal_value[..., head[1], :] = einops.einsum(normalized_resid, W_Q, "batch seq d_model, d_model d_head -> batch seq d_head") + b_Q
 
-  elif act_name == "k":
-    W_K, b_K = model.W_K[head[0], head[1]], model.b_K[head[0], head[1]]
-    internal_value[..., head[1], :] = einops.einsum(normalized_resid, W_K, "batch seq d_model, d_model d_head -> batch seq d_head") + b_K
+#   elif act_name == "k":
+#     W_K, b_K = model.W_K[head[0], head[1]], model.b_K[head[0], head[1]]
+#     internal_value[..., head[1], :] = einops.einsum(normalized_resid, W_K, "batch seq d_model, d_model d_head -> batch seq d_head") + b_K
 
 def project_stuff_on_heads(project_heads, project_only = False, scale_proj = 1, output = "display_logits", freeze_ln = False, return_just_lds = False):
 
@@ -1213,6 +1213,13 @@ def project_stuff_on_heads(project_heads, project_only = False, scale_proj = 1, 
         
   
 # %%
+def freeze_ln_from_layer(first_layer):
+    for layer in range(first_layer, model.cfg.n_layers):
+                model.add_hook("blocks." + str(layer) + ".ln1.hook_scale", patch_ln_scale)
+                model.add_hook("blocks." + str(layer) + ".ln2.hook_scale", patch_ln2_scale)
+
+    model.add_hook("ln_final.hook_scale", patch_last_ln)
+
 
 def run_interventions(return_just_lds = False):
     """
@@ -1227,11 +1234,7 @@ def run_interventions(return_just_lds = False):
 
     model.reset_hooks()
 
-    if ln_on:
-        for layer in [9,10,11]:
-            model.add_hook("blocks." + str(layer) + ".ln1.hook_scale", patch_ln_scale)
-            model.add_hook("blocks." + str(layer) + ".ln2.hook_scale", patch_ln2_scale)
-        model.add_hook("ln_final.hook_scale", patch_last_ln)
+    if ln_on: freeze_ln_from_layer(9)
 
     for head in target_heads:
 
@@ -1251,12 +1254,8 @@ def run_interventions(return_just_lds = False):
 
     model.reset_hooks()
 
-    if ln_on:
-        for layer in [9,10,11]:
-                    model.add_hook("blocks." + str(layer) + ".ln1.hook_scale", patch_ln_scale)
-                    model.add_hook("blocks." + str(layer) + ".ln2.hook_scale", patch_ln2_scale)
-        model.add_hook("ln_final.hook_scale", patch_last_ln)
-    
+    if ln_on: freeze_ln_from_layer(9)
+
     for head in target_heads:
         print(head)
         # get the output of head on CORRUPTED RUN
@@ -1293,7 +1292,7 @@ third_intervention = run_interventions(return_just_lds = True)
 zero_ablate_all_heads_lds, project_only_io_direction_lds, replace_all_perp_IOs_lds, project_away_io_direction, replace_all_IOs_lds = third_intervention
 
 #per_head_logit_diff, ablated_logit_diff
-# %%
+# %% Plot Interventions on ldd y=x graph
 fig = px.scatter()
 x =  per_head_logit_diff.flatten()
 
@@ -1340,49 +1339,47 @@ def get_average_and_not_output_across_tasks(cache, layer, head) -> Float[Tensor,
 
 # %% Major Idea. Mean Ablate all of these heads, and see if backup occurs. I don't know how I haven't tried this yet.
 model.reset_hooks()
-if ln_on:
-    for layer in [9,10,11]:
-                model.add_hook("blocks." + str(layer) + ".ln1.hook_scale", patch_ln_scale)
-                model.add_hook("blocks." + str(layer) + ".ln2.hook_scale", patch_ln2_scale)
-
-model.add_hook("ln_final.hook_scale", patch_last_ln)
+if ln_on:  freeze_ln_from_layer(9)
 for head in [(9,6), (9,9)]:
     # get the average output of head
     W_O_temp = model.W_O[head[0], head[1]]
     layer_z, clean_outputs = get_average_and_not_output_across_tasks(clean_cache, head[0], head[1])
-    
     head_result = einops.einsum(W_O_temp, layer_z, "d_head d_model, seq d_head ->  seq d_model")[-1]
     head_result = einops.repeat(head_result, "d_model -> batch d_model", batch = clean_tokens.shape[0])
-
-
     clean_outputs = clean_outputs[:, -1, :]
     clean_outputs = einops.einsum(W_O_temp, clean_outputs, "d_head d_model, seq d_head ->  seq d_model")
 
-    # get projection of CORRUPTED HEAD OUTPUT onto IO perp token
-    # corrupted_head_only_IO_output = get_projection(output_head, target_intervene_direction)
-    # everything_else_but_that = output_head - corrupted_head_only_IO_output
-
     # add hook to now replace with this corrupted IO perp direction
-    print(clean_outputs.shape)
-    print(head_result.shape)
     model.add_hook(utils.get_act_name("result", head[0]), partial(project_away_component_and_replace_with_something_else, project_away_vector = clean_outputs, heads = [head[1]], replace_vector = head_result, project_only = False))
 
 replace_with_new_perp_IO_logits, replace_with_new_perp_IO_cache = model.run_with_cache(clean_tokens)
 model.reset_hooks()
-
-ca = calc_all_logit_contibutions(clean_cache)
 replace_all_perp_IOs_logit_contributions = calc_all_logit_contibutions(replace_with_new_perp_IO_cache)
-display_all_logits(replace_with_new_perp_IO_cache, comparison = True, title = f"Logit Diff Diff from mean Ablating in heads 9.6 and 9.9", include_incorrect=INCLUDE_INCORRECT)
-# %% Try adding back in the IO directions into the sample ablated stuff?
-
-
+display_all_logits(replace_with_new_perp_IO_cache, comparison = True, title = f"Logit Diff Diff from Mean Ablating in heads 9.6 and 9.9", include_incorrect=INCLUDE_INCORRECT)
+# %% Replace 9.9 and 9.6 with Output - Mean
 model.reset_hooks()
-if ln_on:
-    for layer in [9,10,11]:
-                model.add_hook("blocks." + str(layer) + ".ln1.hook_scale", patch_ln_scale)
-                model.add_hook("blocks." + str(layer) + ".ln2.hook_scale", patch_ln2_scale)
+if ln_on:  freeze_ln_from_layer(9)
+for head in [(9,6), (9,9)]:
+    # get the average output of head
+    W_O_temp = model.W_O[head[0], head[1]]
+    layer_z, clean_outputs = get_average_and_not_output_across_tasks(clean_cache, head[0], head[1])
+    head_result = einops.einsum(W_O_temp, layer_z, "d_head d_model, seq d_head ->  seq d_model")[-1]
+    head_result = einops.repeat(head_result, "d_model -> batch d_model", batch = clean_tokens.shape[0])
+    clean_outputs = clean_outputs[:, -1, :]
+    clean_outputs = einops.einsum(W_O_temp, clean_outputs, "d_head d_model, seq d_head ->  seq d_model")
 
-model.add_hook("ln_final.hook_scale", patch_last_ln)
+    # add hook to now replace with this corrupted IO perp direction
+    model.add_hook(utils.get_act_name("result", head[0]), partial(project_away_component_and_replace_with_something_else, project_away_vector = clean_outputs, heads = [head[1]], replace_vector = clean_outputs - head_result, project_only = False))
+
+replace_with_new_perp_IO_logits, replace_with_new_perp_IO_cache = model.run_with_cache(clean_tokens)
+model.reset_hooks()
+replace_all_perp_IOs_logit_contributions = calc_all_logit_contibutions(replace_with_new_perp_IO_cache)
+display_all_logits(replace_with_new_perp_IO_cache, comparison = True, title = f"Logit Diff Diff from Clean - Mean in heads 9.6 and 9.9", include_incorrect=INCLUDE_INCORRECT)
+
+# %% Try adding back in the IO directions into the sample ablated stuff?
+model.reset_hooks()
+if ln_on:  freeze_ln_from_layer(9)
+
 for head in [(9,6), (9,9)]:
     # get the average output of head
     W_O_temp = model.W_O[head[0], head[1]]
@@ -1402,7 +1399,7 @@ for head in [(9,6), (9,9)]:
     # add hook to now replace with this corrupted IO perp direction
     print(clean_outputs.shape)
     print(head_result.shape)
-    model.add_hook(utils.get_act_name("result", head[0]), partial(project_away_component_and_replace_with_something_else, project_away_vector = clean_outputs, heads = [head[1]], replace_vector = head_result + 4*unembed_io_directions, project_only = False))
+    model.add_hook(utils.get_act_name("result", head[0]), partial(project_away_component_and_replace_with_something_else, project_away_vector = clean_outputs, heads = [head[1]], replace_vector = head_result + 4 * unembed_io_directions, project_only = False))
 
 replace_with_new_perp_IO_logits, replace_with_new_perp_IO_cache = model.run_with_cache(clean_tokens)
 model.reset_hooks()
@@ -1416,12 +1413,12 @@ io_scaling = [0.1 * i for i in range(-70,70,1)]
 heads_to_graph = [(10,7), (10,2)]
 head_changed_outputs_to_io_direction = torch.zeros((len(heads_to_graph), len(io_scaling)))
 
-
 # generate a random vector that is the same size as unembed_io_directions
 random_vector = torch.randn(unembed_io_directions.shape).to(device) * 10
 # make it the same length as unembed_io_direction
 random_vector = random_vector / torch.norm(random_vector, dim = -1, keepdim = True) * torch.norm(unembed_io_directions, dim = -1, keepdim = True)
 
+# run interventions
 for scaling in io_scaling:
     model.reset_hooks()
     if ln_on:
@@ -1449,7 +1446,7 @@ for scaling in io_scaling:
         # add hook to now replace with this corrupted IO perp direction
     
         
-        model.add_hook(utils.get_act_name("result", head[0]), partial(project_away_component_and_replace_with_something_else, project_away_vector = clean_outputs, heads = [head[1]], replace_vector = head_result + head_result * unembed_io_directions, project_only = False))
+        model.add_hook(utils.get_act_name("result", head[0]), partial(project_away_component_and_replace_with_something_else, project_away_vector = clean_outputs, heads = [head[1]], replace_vector = clean_outputs + scaling * unembed_io_directions, project_only = False))
 
     replace_with_new_perp_IO_logits, replace_with_new_perp_IO_cache = model.run_with_cache(clean_tokens)
     model.reset_hooks()
@@ -1459,8 +1456,6 @@ for scaling in io_scaling:
 
     for index, head in enumerate(heads_to_graph):
         head_changed_outputs_to_io_direction[index, io_scaling.index(scaling)] = replace_all_perp_IOs_logit_contributions[head[0], head[1]].mean(0) - ca[head[0], head[1]].mean(0)
-# %%
-
 
 fig = go.Figure()
 x = io_scaling
@@ -1471,9 +1466,90 @@ for head in heads_to_graph:
 fig.update_xaxes(title = "Scaling of Direction")
 fig.update_yaxes(title = "Logit Contribution Difference")
 fig.update_layout(
-    title = "Logit Contribution Difference when Sample Ablating 9.6 and 9.9 while also adding the mean direction to their output"
+    title = "Logit Contribution Difference when adding the io direction to the output of 9.6 and 9.9"
 )
 fig.show()
 
+
+# %% Replace the residual stream in layer 11 with layer 10, and see change in logit diff
+
+def replace_resid_stream_hook(resid_stream, hook, resid_stream_to_replace_with):
+    print("changing residual stream")
+    resid_stream = resid_stream_to_replace_with.clone()
+    return resid_stream
+
+clone_layer = 10
+into_layer = 11
+model.reset_hooks()
+resid_pre_10 = clean_cache[utils.get_act_name("resid_pre", clone_layer)]
+model.add_hook(utils.get_act_name("resid_pre", into_layer), partial(replace_resid_stream_hook, resid_stream_to_replace_with = resid_pre_10))
+_, hooked_cache = model.run_with_cache(clean_tokens)
+model.reset_hooks()
+# display new logit diff
+display_all_logits(hooked_cache, comparison = True, title = f"Logit Diff Diff from cloning resid_pre_{clone_layer} into resid_pre_{into_layer}", include_incorrect=INCLUDE_INCORRECT)
+del resid_pre_10
+
+# %%
+def kqv_rewrite_hook(
+    internal_value: Float[Tensor, "batch seq head d_head"],
+    hook: HookPoint,
+    head: tuple,
+    changed_resid:  Float[Tensor, "batch seq d_model"],
+    act_name,
+    position = -1,
+    pre_ln = True
+):
+  """
+  replaces keys or queries with a new result which we get from a different residual stream
+  head: tuple for head to rewrite keys for
+  changed_resid: stored unnormalized residual stream needed to recalculated activations
+  """
+
+  #print("intervening in query/key")
+  ln1 = model.blocks[hook.layer()].ln1
+  temp_resid = changed_resid.clone()
+  normalized_resid = ln1(temp_resid)
+
+  assert act_name == "q" or act_name == "k" or act_name == "v"
+
+  if act_name == "q":
+    weight, bias = (model.W_Q[head[0], head[1]], model.b_Q[head[0], head[1]])
+  elif act_name == "k":
+    weight, bias = model.W_K[head[0], head[1]], model.b_K[head[0], head[1]]
+  else:
+    weight, bias =  model.W_V[head[0], head[1]], model.b_V[head[0], head[1]]
+
+  internal_value[..., head[1], :] = einops.einsum(normalized_resid, weight, "batch seq d_model, d_model d_head -> batch seq d_head") + bias
+    
+# %% Add the new residual stream into components of a head
+clone_layer = 9
+into_layer = 10
+heads_to_write_into = [(into_layer,i) for i in range(12)] #+  [(11,i) for i in range(12)]
+for act, act_name in [("q", "query"), ("k", "key"),  ("v", "value")]:
+    model.reset_hooks()
+    resid_pre = clean_cache[utils.get_act_name("resid_pre", clone_layer)]
+    for head in heads_to_write_into:
+        model.add_hook(utils.get_act_name(act, head[0]), partial(kqv_rewrite_hook, changed_resid = resid_pre, head = head, act_name = "q"))
+    _, hooked_cache = model.run_with_cache(clean_tokens)
+    model.reset_hooks()
+    # display new logit diff
+    display_all_logits(hooked_cache, comparison = True, title = f"Logit Diff Diff from cloning resid_pre_{clone_layer} into the {act_name} of {heads_to_write_into}", include_incorrect=INCLUDE_INCORRECT)
+# %% Add the new residual stream + an output of a head into components of a head
+clone_layer = 9
+heads_to_write_into = [(into_layer,i) for i in range(clone_layer, 12)]
+heads_whose_outputs_to_simulate = [(9,i) for i in range(12) if (9,i) not in [(9,6), (9,9)]]
+resid_pre = clean_cache[utils.get_act_name("resid_pre", clone_layer)]
+# add head outputs to resid_pre
+for head in heads_whose_outputs_to_simulate:
+    resid_pre += clean_cache[utils.get_act_name("result", head[0])][:, :, head[1], :]
+
+for act, act_name in [("q", "query"), ("k", "key"),  ("v", "value")]:
+    model.reset_hooks()
+    for head in heads_to_write_into:
+        model.add_hook(utils.get_act_name(act, head[0]), partial(kqv_rewrite_hook, changed_resid = resid_pre, head = head, act_name = "q"))
+    _, hooked_cache = model.run_with_cache(clean_tokens)
+    model.reset_hooks()
+    # display new logit diff
+    display_all_logits(hooked_cache, comparison = True, title = f"Logit Diff Diff from cloning resid_pre_{clone_layer} into the {act_name} of downstream layers, while simulating output of {heads_whose_outputs_to_simulate}", include_incorrect=INCLUDE_INCORRECT)
 
 # %%
