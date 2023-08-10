@@ -15,7 +15,7 @@ model = HookedTransformer.from_pretrained(
     center_unembed=True,
     center_writing_weights=True,
     fold_ln=True,
-    #refactor_factored_attn_matrices=True,
+    refactor_factored_attn_matrices=False,
     device = device,
 )
 # %% 
@@ -1131,17 +1131,17 @@ def patch_head_vector(
     every sequence position, using the value from the other cache.
     '''
     for head_index in head_indices:
-      head_vector[:, :, head_index] = other_cache[hook.name][:, :, head_index]
+      head_vector[:, :, head_index] = other_cache[hook.name][:, :, head_index].clone()
     return head_vector
 
 def patch_ln_scale(ln_scale, hook):
   #print(torch.equal(ln_scale, clean_cache["blocks." + str(hook.layer()) + ".ln1.hook_scale"]))
-  ln_scale = clean_cache["blocks." + str(hook.layer()) + ".ln1.hook_scale"]
+  ln_scale = clean_cache["blocks." + str(hook.layer()) + ".ln1.hook_scale"].clone()
   return ln_scale
 
 def patch_ln2_scale(ln_scale, hook):
   #print(torch.equal(ln_scale, clean_cache["blocks." + str(hook.layer()) + ".ln1.hook_scale"]))
-  ln_scale = clean_cache["blocks." + str(hook.layer()) + ".ln2.hook_scale"]
+  ln_scale = clean_cache["blocks." + str(hook.layer()) + ".ln2.hook_scale"].clone()
   return ln_scale
 
 # def kq_rewrite_hook(
@@ -1240,7 +1240,7 @@ def run_interventions(return_just_lds = False):
 
         # get the output of head on CORRUPTED RUN
         W_O_temp = model.W_O[head[0], head[1]]
-        layer_z = corrupted_cache[utils.get_act_name("z", head[0])]
+        layer_z = corrupted_cache[utils.get_act_name("z", head[0])].clone()
         layer_result = einops.einsum(W_O_temp, layer_z, "d_head d_model, batch seq h_idx d_head -> batch seq h_idx d_model")
         output_head = layer_result[:, -1, head[1], :]
 
@@ -1260,7 +1260,7 @@ def run_interventions(return_just_lds = False):
         print(head)
         # get the output of head on CORRUPTED RUN
         W_O_temp = model.W_O[head[0], head[1]]
-        layer_z = corrupted_cache[utils.get_act_name("z", head[0])]
+        layer_z = corrupted_cache[utils.get_act_name("z", head[0])].clone()
         layer_result = einops.einsum(W_O_temp, layer_z, "d_head d_model, batch seq h_idx d_head -> batch seq h_idx d_model")
         output_head = layer_result[:, -1, head[1], :]
 
@@ -1333,7 +1333,7 @@ fig.show()
 # %%
 # 
 def get_average_and_not_output_across_tasks(cache, layer, head) -> Float[Tensor, "pos d_model"]:
-    head_outs = cache[utils.get_act_name("z", layer)][..., head, :]
+    head_outs = cache[utils.get_act_name("z", layer)][..., head, :].clone()
     return head_outs.mean(0).to(device), head_outs.to(device)
     
 
@@ -1481,7 +1481,7 @@ def replace_resid_stream_hook(resid_stream, hook, resid_stream_to_replace_with):
 clone_layer = 10
 into_layer = 11
 model.reset_hooks()
-resid_pre_10 = clean_cache[utils.get_act_name("resid_pre", clone_layer)]
+resid_pre_10 = clean_cache[utils.get_act_name("resid_pre", clone_layer)].clone()
 model.add_hook(utils.get_act_name("resid_pre", into_layer), partial(replace_resid_stream_hook, resid_stream_to_replace_with = resid_pre_10))
 _, hooked_cache = model.run_with_cache(clean_tokens)
 model.reset_hooks()
@@ -1506,12 +1506,14 @@ def kqv_rewrite_hook(
   """
 
   #print("intervening in query/key")
-  ln1 = model.blocks[hook.layer()].ln1
+
+  #assert changed_resid.equal(clean_cache[utils.get_act_name("resid_pre", 9)])
+  ln1 = model.blocks[head[0]].ln1
+  #print(ln1)
   temp_resid = changed_resid.clone()
   normalized_resid = ln1(temp_resid)
 
   assert act_name == "q" or act_name == "k" or act_name == "v"
-
   if act_name == "q":
     weight, bias = (model.W_Q[head[0], head[1]], model.b_Q[head[0], head[1]])
   elif act_name == "k":
@@ -1519,37 +1521,61 @@ def kqv_rewrite_hook(
   else:
     weight, bias =  model.W_V[head[0], head[1]], model.b_V[head[0], head[1]]
 
-  internal_value[..., head[1], :] = einops.einsum(normalized_resid, weight, "batch seq d_model, d_model d_head -> batch seq d_head") + bias
-    
+  temp = einops.einsum(normalized_resid, weight, "batch seq d_model, d_model d_head -> batch seq d_head") + bias
+#   print(temp[0][0])
+#   print(internal_value[..., head[1], :][0][0])
+#   assert internal_value[..., head[1], :].equal(temp)
+  internal_value[..., head[1], :] = temp
 # %% Add the new residual stream into components of a head
 clone_layer = 9
-into_layer = 10
-heads_to_write_into = [(into_layer,i) for i in range(12)] #+  [(11,i) for i in range(12)]
+into_layer = 11
+heads_to_write_into = [(into_layer,j) for j in range(12)] #+  [(11,i) for i in range(12)]
+
 for act, act_name in [("q", "query"), ("k", "key"),  ("v", "value")]:
     model.reset_hooks()
-    resid_pre = clean_cache[utils.get_act_name("resid_pre", clone_layer)]
+    resid_pre = clean_cache[utils.get_act_name("resid_mid", clone_layer)].clone()
     for head in heads_to_write_into:
-        model.add_hook(utils.get_act_name(act, head[0]), partial(kqv_rewrite_hook, changed_resid = resid_pre, head = head, act_name = "q"))
+        model.add_hook(utils.get_act_name(act, head[0]), partial(kqv_rewrite_hook, changed_resid = resid_pre, head = head, act_name = act))
+        pass
     _, hooked_cache = model.run_with_cache(clean_tokens)
     model.reset_hooks()
     # display new logit diff
     display_all_logits(hooked_cache, comparison = True, title = f"Logit Diff Diff from cloning resid_pre_{clone_layer} into the {act_name} of {heads_to_write_into}", include_incorrect=INCLUDE_INCORRECT)
+
+
 # %% Add the new residual stream + an output of a head into components of a head
 clone_layer = 9
-heads_to_write_into = [(into_layer,i) for i in range(clone_layer, 12)]
-heads_whose_outputs_to_simulate = [(9,i) for i in range(12) if (9,i) not in [(9,6), (9,9)]]
-resid_pre = clean_cache[utils.get_act_name("resid_pre", clone_layer)]
+into_layer = 10
+heads_to_write_into = [(into_layer,j) for j in range(12)] #+  [(11,i) for i in range(12)]
+
+#heads_whose_outputs_to_simulate = [(9,6), (9,9)]
+heads_whose_outputs_to_simulate =  []#[(9,i) for i in range(12) if (9,i) not in []]
+resid_pre = clean_cache[utils.get_act_name("resid_mid", clone_layer)].clone()
+temp_checker = torch.zeros(resid_pre.shape).cuda()
 # add head outputs to resid_pre
 for head in heads_whose_outputs_to_simulate:
-    resid_pre += clean_cache[utils.get_act_name("result", head[0])][:, :, head[1], :]
+    #resid_pre += clean_cache[utils.get_act_name("result", head[0])][:, :, head[1], :]
+    temp_checker += clean_cache[utils.get_act_name("result", head[0])][:, :, head[1], :].clone()
+if False:
+    #resid_pre += model.b_O[clone_layer]
+    temp_checker += model.b_O[clone_layer]
+
+resid_pre += temp_checker
+
 
 for act, act_name in [("q", "query"), ("k", "key"),  ("v", "value")]:
     model.reset_hooks()
     for head in heads_to_write_into:
-        model.add_hook(utils.get_act_name(act, head[0]), partial(kqv_rewrite_hook, changed_resid = resid_pre, head = head, act_name = "q"))
+        model.add_hook(utils.get_act_name(act, head[0]), partial(kqv_rewrite_hook, changed_resid = resid_pre, head = head, act_name = act))
     _, hooked_cache = model.run_with_cache(clean_tokens)
     model.reset_hooks()
     # display new logit diff
     display_all_logits(hooked_cache, comparison = True, title = f"Logit Diff Diff from cloning resid_pre_{clone_layer} into the {act_name} of downstream layers, while simulating output of {heads_whose_outputs_to_simulate}", include_incorrect=INCLUDE_INCORRECT)
 
+# %%
+print(clean_cache[utils.get_act_name("resid_mid", 9)][0][0][0:30])
+print(clean_cache[utils.get_act_name("resid_pre", 9)][0][0][0:30] + clean_cache[utils.get_act_name("attn_out", 9)][0][0][0:30])
+
+
+assert clean_cache[utils.get_act_name("resid_mid", 9)].allclose(clean_cache[utils.get_act_name("resid_pre", 9)] + clean_cache[utils.get_act_name("attn_out", 9)])
 # %%
