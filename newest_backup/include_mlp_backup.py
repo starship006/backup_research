@@ -23,8 +23,8 @@ model = HookedTransformer.from_pretrained(
 )
 # %% Dataest
 owt_dataset = utils.get_dataset("owt")
-BATCH_SIZE = 40
-PROMPT_LEN = 20
+BATCH_SIZE = 50
+PROMPT_LEN = 50
 
 all_owt_tokens = model.to_tokens(owt_dataset[0:BATCH_SIZE * 2]["text"]).to(device)
 owt_tokens = all_owt_tokens[0:BATCH_SIZE][:, :PROMPT_LEN]
@@ -187,7 +187,7 @@ def collect_direct_effect(cache: ActivationCache, correct_tokens: Float[Tensor, 
     
     # iterate over every neuron to avoid memory issues
     if collect_individual_neurons:
-        for neuron in tqdm.tqdm(range(model.cfg.d_mlp)):
+        for neuron in tqdm(range(model.cfg.d_mlp)):
             single_neuron_output: Float[Tensor, "n_layer batch pos d_model"] = cache.stack_neuron_results(layer = -1, neuron_slice = (neuron, neuron + 1), return_labels = False, apply_ln = False)
             direct_effect_mlp[:, neuron, :, :] = residual_stack_to_direct_effect(single_neuron_output,
                                                                                             cache, token_residual_directions,
@@ -295,7 +295,7 @@ show_input(temp_head_effect.mean((-1,-2)) - per_head_direct_effect.mean((-1,-2))
 pairs_of_head_backup = {}
 pairs_of_mlp_backup = {}
 threshold = 0.05
-for layer in tqdm.tqdm(range(model.cfg.n_layers)):
+for layer in tqdm(range(model.cfg.n_layers)):
     for head in range(model.cfg.n_heads):
         temp_head_effect, temp_mlp_effect =dir_effects_from_sample_ablating(attention_heads = [(layer, head)])
         head_backup: Float[Tensor, "layer head"] = temp_head_effect.mean((-1,-2)) - per_head_direct_effect.mean((-1,-2))
@@ -323,7 +323,7 @@ for layer, head in pairs_of_head_backup.keys():
 # new_pairs_of_head_backup = {}
 # new_pairs_of_mlp_backup = {}
 # threshold = 0.05
-# for layer in tqdm.tqdm(range(model.cfg.n_layers)):
+# for layer in tqdm(range(model.cfg.n_layers)):
 #     for neuron in range(model.cfg.d_mlp):
 #         temp_head_effect, temp_mlp_effect =dir_effects_from_sample_ablating(neurons = [(layer, neuron)])
 #         head_backup: Float[Tensor, "layer head"] = temp_head_effect.mean((-1,-2)) - per_head_direct_effect.mean((-1,-2))
@@ -370,7 +370,7 @@ def create_scatter_of_backup_of_component(heads = None, mlp_layers = None, retur
         assert len(set([layer for (layer, head) in heads])) == 1
         layer = heads[0][0]
         head = heads[0][1]
-        print(layer)
+        #print(layer)
     elif mlp_layers is not None:
         # layer is max of all the layers
         layer = max(mlp_layers)
@@ -382,8 +382,8 @@ def create_scatter_of_backup_of_component(heads = None, mlp_layers = None, retur
     # 2) gets the total accumulated backup of the head for each prompt and position
     downstream_change_in_logit_diff: Float[Tensor, "layer head batch pos"] = ablated_per_head_batch_direct_effect - per_head_direct_effect
     downstream_change_in_mlp_logit_diff: Float[Tensor, "layer batch pos"] = mlp_per_layer_direct_effect - all_layer_direct_effect
-    print(downstream_change_in_logit_diff.shape)
-    print(downstream_change_in_mlp_logit_diff.shape)
+    #print(downstream_change_in_logit_diff.shape)
+    #print(downstream_change_in_mlp_logit_diff.shape)
     
     assert downstream_change_in_logit_diff[0:layer].sum((0,1,2,3)).item() == 0
     if heads is not None:
@@ -639,7 +639,7 @@ plot_accumulated_backup_per_layer(top_k_to_isolate, total_accumulated_backup_per
 
 # %%
 slopes_of_head_backup = torch.zeros((12,12))
-for layer in tqdm.tqdm(range(model.cfg.n_layers)):
+for layer in tqdm(range(model.cfg.n_layers)):
     for head in range(model.cfg.n_heads):
         slopes_of_head_backup[layer, head] = create_scatter_of_backup_of_component(heads = [(layer, head)], return_slope = True)
         
@@ -664,7 +664,7 @@ def get_backup_per_neuron(topk_prompts = 0):
     
     total_iterations = model.cfg.n_layers * model.cfg.d_mlp
     print("Starting to iterate")
-    pbar = tqdm.tqdm(total=total_iterations)
+    pbar = tqdm(total=total_iterations)
     for layer in range(model.cfg.n_layers):
         for neuron in range(model.cfg.d_mlp):
             if topk_prompts > 0:
@@ -732,12 +732,21 @@ def plot_accumulated_backup_per_neuron(top_k_to_isolate, total_accumulated_backu
 
 
 # %%
-top_accumulated_backup_per_neuron, average_clean_logit_diff_per_neuron = get_backup_per_neuron(topk_prompts = 10)
+topk_prompts = 50
+print(device)
+top_accumulated_backup_per_neuron, average_clean_logit_diff_per_neuron = get_backup_per_neuron(topk_prompts = topk_prompts)
 # %%
 
 # save with pickle
-with open(f"backup_per_neuron_{model_name}.pkl", "wb") as f:
-    pickle.dump(top_accumulated_backup_per_neuron, f)
+
+# with open("abc.pkl", "wb") as f:
+#     pickle.dump(top_accumulated_backup_per_neuron, f)
+
+
+
+# with open(f"backup_per_neuron_{model_name}_{BATCH_SIZE}_{PROMPT_LEN}_{topk_prompts}.pkl", "wb") as f:
+#     pickle.dump(top_accumulated_backup_per_neuron, f)
+
 # %%
 plot_accumulated_backup_per_neuron(10, top_accumulated_backup_per_neuron, average_clean_logit_diff_per_neuron)
 # %%
