@@ -853,7 +853,7 @@ def display_all_logits(cache = None, per_head_ld = None, title = "Logit Contribu
             labels={"x": "Head", "y": "Layer", "color": "Logit Contribution"},
             #coloraxis=dict(colorbar_ticksuffix = "%"),
             border=True,
-            width=1500,
+            width=1700,
             margin={"r": 100, "l": 100}
         )
 
@@ -1528,12 +1528,12 @@ def kqv_rewrite_hook(
   internal_value[..., head[1], :] = temp
 # %% Add the new residual stream into components of a head
 clone_layer = 9
-into_layer = 11
+into_layer = 10
 heads_to_write_into = [(into_layer,j) for j in range(12)] #+  [(11,i) for i in range(12)]
 
 for act, act_name in [("q", "query"), ("k", "key"),  ("v", "value")]:
     model.reset_hooks()
-    resid_pre = clean_cache[utils.get_act_name("resid_mid", clone_layer)].clone()
+    resid_pre = clean_cache[utils.get_act_name("resid_pre", clone_layer)].clone()
     for head in heads_to_write_into:
         model.add_hook(utils.get_act_name(act, head[0]), partial(kqv_rewrite_hook, changed_resid = resid_pre, head = head, act_name = act))
         pass
@@ -1549,8 +1549,8 @@ into_layer = 10
 heads_to_write_into = [(into_layer,j) for j in range(12)] #+  [(11,i) for i in range(12)]
 
 #heads_whose_outputs_to_simulate = [(9,6), (9,9)]
-heads_whose_outputs_to_simulate =  []#[(9,i) for i in range(12) if (9,i) not in []]
-resid_pre = clean_cache[utils.get_act_name("resid_mid", clone_layer)].clone()
+heads_whose_outputs_to_simulate =  [(9,i) for i in range(12) if (9,i) not in []]
+resid_pre = clean_cache[utils.get_act_name("resid_pre", clone_layer)].clone()
 temp_checker = torch.zeros(resid_pre.shape).cuda()
 # add head outputs to resid_pre
 for head in heads_whose_outputs_to_simulate:
@@ -1578,4 +1578,86 @@ print(clean_cache[utils.get_act_name("resid_pre", 9)][0][0][0:30] + clean_cache[
 
 
 assert clean_cache[utils.get_act_name("resid_mid", 9)].allclose(clean_cache[utils.get_act_name("resid_pre", 9)] + clean_cache[utils.get_act_name("attn_out", 9)])
+# %% More experiments involving allowing certain heads to go through and contribute to the MLP layer, as well.
+clone_layer = 9
+l2_of_clone_layer = model.blocks[clone_layer].ln2
+mlp_of_clone_layer = model.blocks[clone_layer].mlp
+
+into_layer = 10
+heads_to_write_into = [(into_layer,j) for j in range(12)]
+
+heads_whose_outputs_to_add_and_mlpify = [(9,i) for i in range(12) if (9,i) not in [(9,6), (9,9)]]#[(9,6), (9,8), (9,9), (9,4), (9,5),(9,0)] #[(9,i) for i in range(12) if (9,i) not in []]
+heads_whose_outputs_to_not_mlpify = [(9,i) for i in range(12) if (9,i) not in heads_whose_outputs_to_add_and_mlpify]
+
+resid_pre_for_mlp = clean_cache[utils.get_act_name("resid_pre", clone_layer)].clone()
+attn_into_mlp_out = torch.zeros(resid_pre_for_mlp.shape).cuda()
+attn_fake_out = torch.zeros(resid_pre_for_mlp.shape).cuda()
+
+for head in heads_whose_outputs_to_add_and_mlpify:
+    attn_into_mlp_out += clean_cache[utils.get_act_name("result", head[0])][:, :, head[1], :]
+if True:
+    attn_into_mlp_out += model.b_O[clone_layer]
+
+
+for heads in heads_whose_outputs_to_not_mlpify:
+    attn_fake_out += clean_cache[utils.get_act_name("result", heads[0])][:, :, heads[1], :]
+
+resid_mid_for_mlp = resid_pre_for_mlp + attn_into_mlp_out
+l2_resid_pre_for_mlp = l2_of_clone_layer(resid_mid_for_mlp)
+resid_post_mlp = resid_mid_for_mlp + mlp_of_clone_layer(l2_resid_pre_for_mlp)
+
+# add in head outputs that we didnt mlpify
+resid_post_mlp += attn_fake_out
+for act, act_name in [("q", "query"), ("k", "key"),  ("v", "value")]:
+    model.reset_hooks()
+    for head in heads_to_write_into:
+        model.add_hook(utils.get_act_name(act, head[0]), partial(kqv_rewrite_hook, changed_resid = resid_post_mlp, head = head, act_name = act))
+    _, hooked_cache = model.run_with_cache(clean_tokens)
+    model.reset_hooks()
+    # display new logit diff
+    display_all_logits(hooked_cache, comparison = True, title = f"Logit Diff Diff from cloning resid_pre_{clone_layer} into the {act_name} of downstream layers, while simulating output of {heads_whose_outputs_to_add_and_mlpify} and mlpifying\n and not mlpifying everything else", include_incorrect=INCLUDE_INCORRECT)
+
+# %% Subtracting 9.6 and 9.9 output LOL
+
+clone_layer = 9
+l2_of_clone_layer = model.blocks[clone_layer].ln2
+mlp_of_clone_layer = model.blocks[clone_layer].mlp
+
+into_layer = 10
+heads_to_write_into = [(into_layer,j) for j in range(12)]
+
+heads_whose_outputs_to_add_and_mlpify = [(9,i) for i in range(12) if (9,i) not in []]
+heads_whose_outputs_to_not_mlpify = [(9,i) for i in range(12) if (9,i) not in heads_whose_outputs_to_add_and_mlpify]
+
+resid_pre_for_mlp = clean_cache[utils.get_act_name("resid_pre", clone_layer)].clone()
+attn_into_mlp_out = torch.zeros(resid_pre_for_mlp.shape).cuda()
+attn_fake_out = torch.zeros(resid_pre_for_mlp.shape).cuda()
+
+for head in heads_whose_outputs_to_add_and_mlpify:
+    attn_into_mlp_out += clean_cache[utils.get_act_name("result", head[0])][:, :, head[1], :]
+if True:
+    attn_into_mlp_out += model.b_O[clone_layer]
+
+
+for heads in heads_whose_outputs_to_not_mlpify:
+    attn_fake_out += clean_cache[utils.get_act_name("result", heads[0])][:, :, heads[1], :]
+
+resid_mid_for_mlp = resid_pre_for_mlp + attn_into_mlp_out
+l2_resid_pre_for_mlp = l2_of_clone_layer(resid_mid_for_mlp)
+resid_post_mlp = resid_mid_for_mlp + mlp_of_clone_layer(l2_resid_pre_for_mlp)
+
+# INTERVENTION: delete directions
+resid_post_mlp -= clean_cache[utils.get_act_name("result", 9)][:, :, 6, :] + clean_cache[utils.get_act_name("result", 9)][:, :, 9, :]
+
+# add in head outputs that we didnt mlpify
+resid_post_mlp += attn_fake_out
+for act, act_name in [("q", "query"), ("k", "key"),  ("v", "value")]:
+    model.reset_hooks()
+    for head in heads_to_write_into:
+        model.add_hook(utils.get_act_name(act, head[0]), partial(kqv_rewrite_hook, changed_resid = resid_post_mlp, head = head, act_name = act))
+    _, hooked_cache = model.run_with_cache(clean_tokens)
+    model.reset_hooks()
+    # display new logit diff
+    display_all_logits(hooked_cache, comparison = True, title = f"Logit Diff Diff from cloning resid_pre_{clone_layer} into the {act_name} of downstream layers, while simulating output of {heads_whose_outputs_to_add_and_mlpify} and mlpifying\n and not mlpifying everything else", include_incorrect=INCLUDE_INCORRECT)
+
 # %%
