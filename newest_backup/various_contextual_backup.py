@@ -4,7 +4,7 @@
 # !pip install git+https://github.com/callummcdougall/CircuitsVis.git#subdirectory=python
 # !pip install git+https://github.com/neelnanda-io/neel-plotly.git
 # !pip install 
-!pip install plotly fancy_einsum jaxtyping transformers datasets transformer_lens
+#!pip install plotly fancy_einsum jaxtyping transformers datasets transformer_lens
 from imports import *
 # %%
 
@@ -520,7 +520,7 @@ print(model.to_str_tokens(ignore_mr_string))
 print(model.to_str_tokens(ignore_mrs_string))
 # %%
 TOTAL_TYPES = 4
-NUM_PROMPTS = 4 * 6 * TOTAL_TYPES
+NUM_PROMPTS = 20 * 6 * TOTAL_TYPES
 PROMPTS_PER_TYPE = int(NUM_PROMPTS / TOTAL_TYPES)
 
 
@@ -832,15 +832,82 @@ def calc_all_logit_contibutions(cache, per_prompt = False, include_incorrect = I
 
 
 
+# def display_all_logits(cache = None, per_head_ld = None, title = "Logit Contributions", comparison = False,
+#                         return_fig = False, logits = None, include_incorrect = INCLUDE_INCORRECT):
+#     """
+#     given an input, display the logit contributions of each head
+
+#     comparison: if True, display logit contribution/diff diff; if False, display logits contibution/diff
+#     """
+    
+#     if per_head_ld is not None and cache is None:
+#         assert per_head_ld.shape == (model.cfg.n_layers, model.cfg.n_heads, NUM_PROMPTS)
+#     if per_head_ld is not None and cache is not None:
+#         # throw error - only one should be passed
+#         raise ValueError("Only one of per_head_ld and cache should be passed")
+
+#     if logits is not None:
+#         ld = logits_to_ave_logit_diff(logits, include_incorrect=include_incorrect)
+#     else:
+#         ld = 0.00
+
+#     if per_head_ld is not None:
+#         a = per_head_ld
+#     else:
+#         a = calc_all_logit_contibutions(cache, per_prompt=True, include_incorrect=include_incorrect)
+#     if not comparison:
+#         a_1, a_2, a_3, a_4 = a[..., :PROMPTS_PER_TYPE], a[..., PROMPTS_PER_TYPE:2*PROMPTS_PER_TYPE], a[..., 2*PROMPTS_PER_TYPE:3*PROMPTS_PER_TYPE], a[..., 3*PROMPTS_PER_TYPE:]
+#         fig = imshow(
+#             torch.stack([(a_1).mean(-1), 
+#                             (a_2).mean(-1), (a_3).mean(-1), (a_4).mean(-1)]),
+#             return_fig = True,
+#             facet_col = 0,
+#             facet_labels = type_names,
+#             title=title,
+#             labels={"x": "Head", "y": "Layer", "color": "Logit Contribution"},
+#             #coloraxis=dict(colorbar_ticksuffix = "%"),
+#             border=True,
+#             width=1500,
+#             margin={"r": 100, "l": 100},
+#         )
+#     else:
+#         ca = calc_all_logit_contibutions(clean_cache, per_prompt = True, include_incorrect=include_incorrect)
+#         a_1, a_2, a_3, a_4 = a[..., :PROMPTS_PER_TYPE], a[..., PROMPTS_PER_TYPE:2*PROMPTS_PER_TYPE], a[..., 2*PROMPTS_PER_TYPE:3*PROMPTS_PER_TYPE], a[..., 3*PROMPTS_PER_TYPE:]
+#         ca_1, ca_2, ca_3, ca_4 = ca[..., :PROMPTS_PER_TYPE], ca[..., PROMPTS_PER_TYPE:2*PROMPTS_PER_TYPE], ca[..., 2*PROMPTS_PER_TYPE:3*PROMPTS_PER_TYPE], ca[..., 3*PROMPTS_PER_TYPE:]
+
+#         #print(a_1.shape, ca_1.shape, a_2.shape, ca_2.shape, a_3.shape, ca_3.shape, a_4.shape, ca_4.shape)
+#         assert a_1.shape == ca_1.shape == a_2.shape == ca_2.shape == a_3.shape == ca_3.shape == a_4.shape == ca_4.shape
+
+#         fig = imshow(
+#             torch.stack([(a_1 - ca_1).mean(-1), 
+#                             (a_2-ca_2).mean(-1), (a_3 - ca_3).mean(-1), (a_4 - ca_4).mean(-1)]),
+#             return_fig = True,
+#             facet_col = 0,
+#             facet_labels = type_names,
+#             title=title,
+#             labels={"x": "Head", "y": "Layer", "color": "Logit Contribution"},
+#             #coloraxis=dict(colorbar_ticksuffix = "%"),
+#             border=True,
+#             width=1700,
+#             margin={"r": 100, "l": 100}
+#         )
+
+#     if return_fig:
+#         return fig
+#     else:
+#         fig.show()
+
+
+
 def display_all_logits(cache = None, per_head_ld = None, title = "Logit Contributions", comparison = False,
                         return_fig = False, logits = None, include_incorrect = INCLUDE_INCORRECT):
     """
-    given an input, display the logit contributions of each head
+    given an input, display the logit contributions of each head. this version also displays the MLP layer!!
 
     comparison: if True, display logit contribution/diff diff; if False, display logits contibution/diff
     """
     if per_head_ld is not None and cache is None:
-        assert per_head_ld.shape == (model.cfg.n_layers, model.cfg.n_heads, NUM_PROMPTS)
+        assert per_head_ld.shape == (model.cfg.n_layers, model.cfg.n_heads + 1, NUM_PROMPTS)
     if per_head_ld is not None and cache is not None:
         # throw error - only one should be passed
         raise ValueError("Only one of per_head_ld and cache should be passed")
@@ -853,48 +920,87 @@ def display_all_logits(cache = None, per_head_ld = None, title = "Logit Contribu
     if per_head_ld is not None:
         a = per_head_ld
     else:
-        a = calc_all_logit_contibutions(cache, per_prompt=True, include_incorrect=include_incorrect)
-    if not comparison:
-        a_1, a_2, a_3, a_4 = a[..., :PROMPTS_PER_TYPE], a[..., PROMPTS_PER_TYPE:2*PROMPTS_PER_TYPE], a[..., 2*PROMPTS_PER_TYPE:3*PROMPTS_PER_TYPE], a[..., 3*PROMPTS_PER_TYPE:]
-        fig = imshow(
-            torch.stack([(a_1).mean(-1), 
-                            (a_2).mean(-1), (a_3).mean(-1), (a_4).mean(-1)]),
-            return_fig = True,
-            facet_col = 0,
-            facet_labels = type_names,
-            title=title,
-            labels={"x": "Head", "y": "Layer", "color": "Logit Contribution"},
-            #coloraxis=dict(colorbar_ticksuffix = "%"),
-            border=True,
-            width=1500,
-            margin={"r": 100, "l": 100},
-        )
-    else:
-        ca = calc_all_logit_contibutions(clean_cache, per_prompt = True, include_incorrect=include_incorrect)
-        a_1, a_2, a_3, a_4 = a[..., :PROMPTS_PER_TYPE], a[..., PROMPTS_PER_TYPE:2*PROMPTS_PER_TYPE], a[..., 2*PROMPTS_PER_TYPE:3*PROMPTS_PER_TYPE], a[..., 3*PROMPTS_PER_TYPE:]
+        a = calc_all_logit_contibutions(cache, per_prompt=True, include_incorrect=include_incorrect, include_MLP=True)
+
+
+    # with type_names above each subplot
+    fig = plotly.subplots.make_subplots(rows = 1, cols = TOTAL_TYPES, subplot_titles = type_names, shared_yaxes=True)# subplot_titles = type_names)
+    fig.update_layout(yaxis_autorange="reversed")
+    index = 0
+    
+    a_1, a_2, a_3, a_4 = a[..., :PROMPTS_PER_TYPE], a[..., PROMPTS_PER_TYPE:2*PROMPTS_PER_TYPE], a[..., 2*PROMPTS_PER_TYPE:3*PROMPTS_PER_TYPE], a[..., 3*PROMPTS_PER_TYPE:]
+    if comparison:
+        ca = calc_all_logit_contibutions(clean_cache, per_prompt = True, include_incorrect=include_incorrect, include_MLP=True)
         ca_1, ca_2, ca_3, ca_4 = ca[..., :PROMPTS_PER_TYPE], ca[..., PROMPTS_PER_TYPE:2*PROMPTS_PER_TYPE], ca[..., 2*PROMPTS_PER_TYPE:3*PROMPTS_PER_TYPE], ca[..., 3*PROMPTS_PER_TYPE:]
+        
+        print(a_1.shape)
+        print(ca_1.shape)
+        a_1 = a_1 - ca_1
+        a_2 = a_2 - ca_2
+        a_3 = a_3 - ca_3
+        a_4 = a_4 - ca_4
 
-        #print(a_1.shape, ca_1.shape, a_2.shape, ca_2.shape, a_3.shape, ca_3.shape, a_4.shape, ca_4.shape)
-        assert a_1.shape == ca_1.shape == a_2.shape == ca_2.shape == a_3.shape == ca_3.shape == a_4.shape == ca_4.shape
 
-        fig = imshow(
-            torch.stack([(a_1 - ca_1).mean(-1), 
-                            (a_2-ca_2).mean(-1), (a_3 - ca_3).mean(-1), (a_4 - ca_4).mean(-1)]),
-            return_fig = True,
-            facet_col = 0,
-            facet_labels = type_names,
-            title=title,
-            labels={"x": "Head", "y": "Layer", "color": "Logit Contribution"},
-            #coloraxis=dict(colorbar_ticksuffix = "%"),
-            border=True,
-            width=1700,
-            margin={"r": 100, "l": 100}
+
+    #a_1, a_2, a_3, a_4 = a[..., :PROMPTS_PER_TYPE], a[..., PROMPTS_PER_TYPE:2*PROMPTS_PER_TYPE], a[..., 2*PROMPTS_PER_TYPE:3*PROMPTS_PER_TYPE], a[..., 3*PROMPTS_PER_TYPE:]
+    for a in [a_1, a_2, a_3, a_4 ]:
+        # add heatmap trace
+        to_graph = (a).mean(-1).cpu()
+        fig.add_trace(
+            go.Heatmap(
+                z = to_graph,
+                x = list(range(model.cfg.n_heads + 13)),
+                y = list(range(model.cfg.n_layers)),
+                colorscale = "RdBu",
+                colorbar = dict(
+                    title = "Logit Contribution",
+                    
+                ),
+                
+                coloraxis = "coloraxis",
+            ),
+            row = 1,
+            col = index + 1
         )
+        x = 12
+        y = -0.5
+        width = 1
+        depth = 12
+        fig.add_shape(
+            type = "rect",
+            x0 = x,
+            x1 = x + width,
+            y0 = y,
+            y1 = y + depth,
+            line = dict(color = "black"),
+            row = 1,
+            col = index + 1
+        )
+        
 
+        # add sideways annotation of text
+        fig.add_annotation(
+            x = 12.5,
+            y = 5.5,
+            text = "MLP",
+            showarrow = False,
+            textangle = 270,
+            row = 1,
+            col = index + 1
+        )
+        index += 1
+    
+    fig.update_coloraxes(colorscale="RdBu", colorbar_title="Logit Contribution", cmid = 0)
+    fig.update_layout(
+        title = title,
+    )
+    fig.update_xaxes(title_text = "Head")
+    fig.update_yaxes(title_text = "Layer")
     if return_fig:
         return fig
     else:
         fig.show()
+
 
 def return_item(item):
     return item
@@ -933,14 +1039,14 @@ def dir_effects_from_path_patching_into_head(ablate_heads, method = "sample", in
     # new_cache = act_patch(model, clean_tokens, [Node("z", layer, head) for (layer,head) in ablate_heads],
     #                         return_item, corrupt_tokens, apply_metric_to_cache= True)
 
-    results = torch.zeros((model.cfg.n_layers, model.cfg.n_heads, NUM_PROMPTS)).cuda()
+    results = torch.zeros((model.cfg.n_layers, model.cfg.n_heads + 1, NUM_PROMPTS)).cuda()
 
     for receiver_layer in range(model.cfg.n_layers):
         for receiver_head in range(model.cfg.n_heads):
             per_head_logit_diff = path_patch(model, clean_tokens, corrupt_tokens,
                                     [Node("z", layer, head) for (layer,head) in ablate_heads],
                                     [Node("q", receiver_layer, receiver_head)],
-                                     partial(calc_all_logit_contibutions, per_prompt=True, include_incorrect=include_incorrect),
+                                     partial(calc_all_logit_contibutions, per_prompt=True, include_incorrect=include_incorrect, include_MLP = True),
                                      apply_metric_to_cache=True)
             results[receiver_layer, receiver_head] = per_head_logit_diff[receiver_layer, receiver_head] 
             
@@ -1692,128 +1798,8 @@ for act, act_name in [("q", "query"), ("k", "key"),  ("v", "value")]:
     _, hooked_cache = model.run_with_cache(clean_tokens)
     model.reset_hooks()
     # display new logit diff
-    shady_display_all_logits(hooked_cache, comparison = True, title = f"Logit Diff Diff from cloning resid_pre_{clone_layer} into the {act_name} of downstream layers, while simulating output of {heads_whose_outputs_to_add_and_mlpify} and mlpifying\n and not mlpifying everything else", include_incorrect=INCLUDE_INCORRECT)
+    display_all_logits(hooked_cache, comparison = True, title = f"Logit Diff Diff from cloning resid_pre_{clone_layer} into the {act_name} of downstream layers, while simulating output of {heads_whose_outputs_to_add_and_mlpify} and mlpifying\n and not mlpifying everything else", include_incorrect=INCLUDE_INCORRECT)
+
 
 # %%
 
-
-
-
-def shady_display_all_logits(cache = None, per_head_ld = None, title = "Logit Contributions", comparison = False,
-                        return_fig = False, logits = None, include_incorrect = INCLUDE_INCORRECT):
-    """
-    given an input, display the logit contributions of each head
-
-    comparison: if True, display logit contribution/diff diff; if False, display logits contibution/diff
-    """
-    if per_head_ld is not None and cache is None:
-        assert per_head_ld.shape == (model.cfg.n_layers, model.cfg.n_heads, NUM_PROMPTS)
-    if per_head_ld is not None and cache is not None:
-        # throw error - only one should be passed
-        raise ValueError("Only one of per_head_ld and cache should be passed")
-
-    if logits is not None:
-        ld = logits_to_ave_logit_diff(logits, include_incorrect=include_incorrect)
-    else:
-        ld = 0.00
-
-    if per_head_ld is not None:
-        a = per_head_ld
-    else:
-        a = calc_all_logit_contibutions(cache, per_prompt=True, include_incorrect=include_incorrect, include_MLP=True)
-    if not comparison:
-        a_1, a_2, a_3, a_4 = a[..., :PROMPTS_PER_TYPE], a[..., PROMPTS_PER_TYPE:2*PROMPTS_PER_TYPE], a[..., 2*PROMPTS_PER_TYPE:3*PROMPTS_PER_TYPE], a[..., 3*PROMPTS_PER_TYPE:]
-
-        #print(a_1.shape, ca_1.shape, a_2.shape, ca_2.shape, a_3.shape, ca_3.shape, a_4.shape, ca_4.shape)
-
-        fig = plotly.subplots.make_subplots(rows = 1, cols = TOTAL_TYPES, subplot_titles = type_names, shared_yaxes=True)
-        
-        fig.update_layout(yaxis_autorange="reversed")
-        index = 0
-        max_abs = max([abs((a).mean(-1).cpu()).max() for a in [a_1, a_2, a_3, a_4 ]] + [abs((a).mean(-1).cpu()).min() for a in [a_1, a_2, a_3, a_4 ]]).item()
-        print(max_abs)
-
-        for a in [a_1, a_2, a_3, a_4 ]:
-            # add heatmap trace
-            to_graph = (a).mean(-1).cpu()
-            
-
-            fig.add_trace(
-                go.Heatmap(
-                    z = to_graph,
-                    x = list(range(13)),
-                    y = list(range(12)),
-                    colorscale = "RdBu",
-                    colorbar = dict(
-                        title = "Logit Contribution",
-                        
-                    ),
-                    coloraxis = "coloraxis",
-                    zmin = -max_abs,
-                    zmax = max_abs
-                ),
-                row = 1,
-                col = index + 1
-            )
-            x = 11.5
-            y = -0.5
-            width = 1
-            depth = 12
-            fig.add_shape(
-                type = "rect",
-                x0 = x,
-                x1 = x + width,
-                y0 = y,
-                y1 = y + depth,
-                line = dict(color = "black"),
-                row = 1,
-                col = index + 1
-            )
-
-            index += 1
-        fig.update_coloraxes(colorscale="RdBu", colorbar_title="Logit Contribution")
-    else:
-        ca = calc_all_logit_contibutions(clean_cache, per_prompt = True, include_incorrect=include_incorrect, include_MLP=True)
-        a_1, a_2, a_3, a_4 = a[..., :PROMPTS_PER_TYPE], a[..., PROMPTS_PER_TYPE:2*PROMPTS_PER_TYPE], a[..., 2*PROMPTS_PER_TYPE:3*PROMPTS_PER_TYPE], a[..., 3*PROMPTS_PER_TYPE:]
-        ca_1, ca_2, ca_3, ca_4 = ca[..., :PROMPTS_PER_TYPE], ca[..., PROMPTS_PER_TYPE:2*PROMPTS_PER_TYPE], ca[..., 2*PROMPTS_PER_TYPE:3*PROMPTS_PER_TYPE], ca[..., 3*PROMPTS_PER_TYPE:]
-
-        print(a_1.shape, ca_1.shape, a_2.shape, ca_2.shape, a_3.shape, ca_3.shape, a_4.shape, ca_4.shape)
-        assert a_1.shape == ca_1.shape == a_2.shape == ca_2.shape == a_3.shape == ca_3.shape == a_4.shape == ca_4.shape
-
-        fig = plotly.subplots.make_subplots(rows = 1, cols = TOTAL_TYPES, subplot_titles = type_names)
-
-        index = 0
-        for a, ca in [(a_1, ca_1), (a_2, ca_2), (a_3, ca_3), (a_4, ca_4)]:
-            # add heatmap trace
-            to_graph = (a - ca).mean(-1).cpu()
-            
-            fig.add_trace(
-                go.Heatmap(
-                    z = to_graph,
-                    x = list(range(13)),
-                    y = list(range(12)),
-                    colorscale = "RdBu",
-                    colorbar = dict(
-                        title = "Logit Contribution",
-                        
-                    ),
-                    coloraxis = "coloraxis",
-                ),
-                row = 1,
-                col = index + 1
-            )
-            index += 1
-        fig.update_coloraxes(colorscale="RdBu", colorbar_title="Logit Contribution")
-    if return_fig:
-        return fig
-    else:
-        fig.show()
-
-
-
-
-
-shady_display_all_logits(clean_cache, comparison=False)
-# %%
-
-# %%
