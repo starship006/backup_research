@@ -23,7 +23,7 @@ model = HookedTransformer.from_pretrained(
 torch.cuda.empty_cache()
 
 TOTAL_TYPES = 4
-NUM_PROMPTS = 2 * 6 * TOTAL_TYPES
+NUM_PROMPTS = 10 * 6 * TOTAL_TYPES
 PROMPTS_PER_TYPE = int(NUM_PROMPTS / TOTAL_TYPES)
 PROMPTS, CORRUPT_PROMPTS, ANSWERS, INCORRECT_ANSWERS, TYPE_NAMES = generate_dataset(model, NUM_PROMPTS, TOTAL_TYPES)
 
@@ -607,7 +607,7 @@ def patch_last_ln(ln_scale, hook):
   ln_scale = clean_cache["ln_final.hook_scale"]
   return ln_scale
 
-unembed_io_directions = model.tokens_to_residual_directions(answer_tokens[:, 0])
+unembed_io_directions = model.tokens_to_residual_directions(answer_tokens[:, 0]).to(device)
 #unembed_s_directions = model.tokens_to_residual_directions(answer_tokens[:, 1])
 #unembed_diff_directions = unembed_io_directions - unembed_s_directions
 
@@ -638,7 +638,7 @@ def patch_ln2_scale(ln_scale, hook):
   return ln_scale
 
 
-def project_stuff_on_heads(project_heads, project_only = False, scale_proj = 1, output = "display_logits", freeze_ln = False, return_just_lds = False):
+def project_stuff_on_heads(project_heads, direction = target_intervene_direction, project_only = False, scale_proj = 1, output = "display_logits", freeze_ln = False, return_just_lds = False):
 
     model.reset_hooks()
     # project_heads is a list of tuples (layer, head). for each layer, write a hook which projects all the heads from the layer
@@ -646,7 +646,7 @@ def project_stuff_on_heads(project_heads, project_only = False, scale_proj = 1, 
         key_heads = [head[1] for head in project_heads if head[0] == layer]
         if len(key_heads) > 0:
             #print(key_heads)
-            model.add_hook(utils.get_act_name("result", layer), partial(project_vector_operation, vector = target_intervene_direction, heads = key_heads, scale_proj = scale_proj, project_only = project_only))
+            model.add_hook(utils.get_act_name("result", layer), partial(project_vector_operation, vector = direction, heads = key_heads, scale_proj = scale_proj, project_only = project_only))
 
     if freeze_ln:
         for layer in [9,10,11]:
@@ -933,8 +933,8 @@ def replace_resid_stream_hook(resid_stream, hook, resid_stream_to_replace_with):
     resid_stream = resid_stream_to_replace_with.clone()
     return resid_stream
 
-clone_layer = 10
-into_layer = 11
+clone_layer = 9
+into_layer = 10
 model.reset_hooks()
 resid_pre_10 = clean_cache[utils.get_act_name("resid_pre", clone_layer)].clone()
 model.add_hook(utils.get_act_name("resid_pre", into_layer), partial(replace_resid_stream_hook, resid_stream_to_replace_with = resid_pre_10))
@@ -1072,7 +1072,7 @@ for act, act_name in [("q", "query"), ("k", "key"),  ("v", "value")]:
     # display new logit diff
     display_all_logits(hooked_cache, comparison = True, title = f"Logit Diff Diff from cloning resid_pre_{clone_layer} into the {act_name} of downstream layers, while simulating output of {heads_whose_outputs_to_add_and_mlpify} and mlpifying\n and not mlpifying everything else", include_incorrect=INCLUDE_INCORRECT)
 
-# %% Subtracting 9.6 and 9.9 output LOL
+# %% Subtracting 9.6 and 9.9 direct, indirect, and both
 
 clone_layer = 9
 l2_of_clone_layer = model.blocks[clone_layer].ln2
@@ -1081,41 +1081,333 @@ mlp_of_clone_layer = model.blocks[clone_layer].mlp
 into_layer = 10
 heads_to_write_into = [(into_layer,j) for j in range(12)]
 
-heads_whose_outputs_to_add_and_mlpify = [(9,i) for i in range(12) if (9,i) not in []]
-heads_whose_outputs_to_not_mlpify = [(9,i) for i in range(12) if (9,i) not in heads_whose_outputs_to_add_and_mlpify]
+ablation_results =[] # direct, indirect, both
+ablate_heads = [(9,6), (9,9)]
 
-resid_pre_for_mlp = clean_cache[utils.get_act_name("resid_pre", clone_layer)].clone()
-attn_into_mlp_out = torch.zeros(resid_pre_for_mlp.shape).cuda()
-attn_fake_out = torch.zeros(resid_pre_for_mlp.shape).cuda()
+for ablate_direct, ablate_indirect in [(True, False), (False, True), (True, True)]:
 
-for head in heads_whose_outputs_to_add_and_mlpify:
-    attn_into_mlp_out += clean_cache[utils.get_act_name("result", head[0])][:, :, head[1], :]
-if True:
-    attn_into_mlp_out += model.b_O[clone_layer]
+    if ablate_direct and ablate_indirect:
+        heads_whose_outputs_to_add_and_mlpify = [(9,i) for i in range(12) if (9,i) not in ablate_heads]
+        heads_whose_outputs_to_not_mlpify = []
+    elif ablate_direct:
+        # have everything initially go through MLP, then subtract out the direct effect later
+        heads_whose_outputs_to_add_and_mlpify = [(9,i) for i in range(12) if (9,i) not in []]
+        heads_whose_outputs_to_not_mlpify = [(9,i) for i in range(12) if (9,i) not in heads_whose_outputs_to_add_and_mlpify]    
+    elif ablate_indirect:
+        heads_whose_outputs_to_add_and_mlpify = [(9,i) for i in range(12) if (9,i) not in ablate_heads]
+        heads_whose_outputs_to_not_mlpify = [(9,i) for i in range(12) if (9,i) not in heads_whose_outputs_to_add_and_mlpify]
+
+    resid_pre_for_mlp = clean_cache[utils.get_act_name("resid_pre", clone_layer)].clone()
+    attn_into_mlp_out = torch.zeros(resid_pre_for_mlp.shape).cuda()
+    attn_fake_out = torch.zeros(resid_pre_for_mlp.shape).cuda()
+
+    for head in heads_whose_outputs_to_add_and_mlpify:
+        attn_into_mlp_out += clean_cache[utils.get_act_name("result", head[0])][:, :, head[1], :]
+    if True:
+        attn_into_mlp_out += model.b_O[clone_layer]
 
 
-for heads in heads_whose_outputs_to_not_mlpify:
-    attn_fake_out += clean_cache[utils.get_act_name("result", heads[0])][:, :, heads[1], :]
+    for heads in heads_whose_outputs_to_not_mlpify:
+        attn_fake_out += clean_cache[utils.get_act_name("result", heads[0])][:, :, heads[1], :]
 
-resid_mid_for_mlp = resid_pre_for_mlp + attn_into_mlp_out
-l2_resid_pre_for_mlp = l2_of_clone_layer(resid_mid_for_mlp)
-resid_post_mlp = resid_mid_for_mlp + mlp_of_clone_layer(l2_resid_pre_for_mlp)
+    resid_mid_for_mlp = resid_pre_for_mlp + attn_into_mlp_out
+    l2_resid_pre_for_mlp = l2_of_clone_layer(resid_mid_for_mlp)
+    resid_post_mlp = resid_mid_for_mlp + mlp_of_clone_layer(l2_resid_pre_for_mlp)
 
-# INTERVENTION: delete directions
-resid_post_mlp -= clean_cache[utils.get_act_name("result", 9)][:, :, 6, :] + clean_cache[utils.get_act_name("result", 9)][:, :, 9, :]
+    # INTERVENTION: delete directions only if ablating direct (only)
+    if ablate_direct and not ablate_indirect:
+        resid_post_mlp -= clean_cache[utils.get_act_name("result", 9)][:, :, 6, :] + clean_cache[utils.get_act_name("result", 9)][:, :, 9, :]
 
-# add in head outputs that we didnt mlpify
-resid_post_mlp += attn_fake_out
-for act, act_name in [("q", "query"), ("k", "key"),  ("v", "value")]:
-    model.reset_hooks()
-    for head in heads_to_write_into:
-        model.add_hook(utils.get_act_name(act, head[0]), partial(kqv_rewrite_hook, changed_resid = resid_post_mlp, head = head, act_name = act))
-    _, hooked_cache = model.run_with_cache(clean_tokens)
-    model.reset_hooks()
-    # display new logit diff
-    display_all_logits(hooked_cache, comparison = True, title = f"Logit Diff Diff from cloning resid_pre_{clone_layer} into the {act_name} of downstream layers, while simulating output of {heads_whose_outputs_to_add_and_mlpify} and mlpifying\n and not mlpifying everything else", include_incorrect=INCLUDE_INCORRECT)
+    # add in head outputs that we didnt mlpify
+    resid_post_mlp += attn_fake_out
+    for act, act_name in [("q", "query"), ("k", "key"),  ("v", "value")]:
+        model.reset_hooks()
+        for head in heads_to_write_into:
+            model.add_hook(utils.get_act_name(act, head[0]), partial(kqv_rewrite_hook, changed_resid = resid_post_mlp, head = head, act_name = act))
+        _, hooked_cache = model.run_with_cache(clean_tokens)
+        model.reset_hooks()
+        # display new logit diff
+        display_all_logits(hooked_cache, comparison = True, title = f"Logit Diff Diff from cloning resid_pre_{clone_layer} into the {act_name} of downstream layers, while simulating output of {heads_whose_outputs_to_add_and_mlpify} and mlpifying\n and not mlpifying everything else", include_incorrect=INCLUDE_INCORRECT)
+
+        if act_name == "query":
+            ablation_results.append(calc_all_logit_contibutions(hooked_cache, per_prompt=True, include_incorrect=INCLUDE_INCORRECT, include_MLP=True) - calc_all_logit_contibutions(clean_cache, per_prompt=True, include_incorrect=INCLUDE_INCORRECT, include_MLP=True))
+
+# %% to what extent can you describe the total change in logit diff from ablating everything as ldd from ablating direct + ldd from ablating indirect effect
+
+for head in range(12):
+    print(f"10.{head}: {(ablation_results[0][10, head].mean(0) + ablation_results[1][10, head]).mean(0) / ablation_results[2][10, head].mean(0)}")
+# %% learn a vector to try to see if we can recover the direction which activates backup in the non CS heads
+torch.set_grad_enabled(True)
+def get_output_of_head(layer, head, cache = clean_cache):
+    matrix = model.W_O[layer, head]
+    layer_output = cache[utils.get_act_name("z", layer)]
+    layer_result = einops.einsum(matrix, layer_output, "d_head d_model, batch seq h_idx d_head -> batch seq h_idx d_model")
+    output_of_head = layer_result[:, -1, head, :]
+    return output_of_head
+
+def apply_causal_mask(
+        attn_scores: Float[Tensor, "batch n_heads query_pos key_pos"]
+    ) -> Float[Tensor, "batch n_heads query_pos key_pos"]:
+        '''
+        Applies a causal mask to attention scores, and returns masked scores.
+        '''
+        # Define a mask that is True for all positions we want to set probabilities to zero for
+        all_ones = torch.ones(attn_scores.size(-2), attn_scores.size(-1), device=attn_scores.device)
+        mask = torch.triu(all_ones, diagonal=1).bool()
+        # Apply the mask to attention scores, then return the masked scores
+        attn_scores.masked_fill_(mask, 1e-6)
+        return attn_scores
+
+
+def simulate_head(resid, layer, head):
+    """
+    given a specific head in the model, simulates running a normalized residual stream through it
+    note that this does the normal gpt-2 style head. not the fancy stuff.
+    """
+
+    # get parameters for head
+    W_Q = model.W_Q[layer, head]
+    W_K = model.W_K[layer, head]
+    W_V = model.W_V[layer, head]
+    W_O = model.W_O[layer, head]
+
+    b_Q = model.b_Q[layer, head]
+    b_K = model.b_K[layer, head]
+    b_V = model.b_V[layer, head]
+    #b_O = model.b_O[layer, head]
+
+    # calculate keys, queries, and values
+    Q = einops.einsum(resid, W_Q, "batch seq d_model, d_model d_head -> batch seq d_head") + b_Q
+    K = einops.einsum(resid, W_K, "batch seq d_model, d_model d_head -> batch seq d_head") + b_K
+    V = einops.einsum(resid, W_V, "batch seq d_model, d_model d_head -> batch seq d_head") + b_V
+
+    # calculate attention scores
+    attn_scores = einops.einsum(
+            Q, K,
+            "batch posn_Q d_head, batch posn_K d_head -> batch posn_Q posn_K",
+        )
+
+    # mask
+    attn_scores = apply_causal_mask(attn_scores/ model.cfg.d_head ** 0.5)
+
+    # calculate attention probs
+    attn_probs = F.softmax(attn_scores, dim=-1)
+
+    # weighted sum of values, according to attention probs
+    z = einops.einsum(
+            V, attn_probs,
+            "batch posn_K d_head, batch posn_Q posn_K -> batch posn_Q d_head",
+        )
+
+    attn_out = einops.einsum(
+            z, W_O,
+            "batch posn_Q d_head, d_head d_model -> batch posn_Q d_model")#+ b_O
+
+    return attn_out
+
 
 
 # %%
+resid_mid_layer_nine = clean_cache[utils.get_act_name("resid_mid", 9)]
+
+nine_nine_sample_ablating_cache = dir_effects_from_sample_ablating_head([(9,9)])
+
+sample_ablate_ten_zero = get_output_of_head(10, 0, nine_nine_sample_ablating_cache)
+sample_ablate_ten_two = get_output_of_head(10, 2, nine_nine_sample_ablating_cache)
+sample_ablate_ten_six = get_output_of_head(10, 6, nine_nine_sample_ablating_cache)
+sample_ablate_ten_ten = get_output_of_head(10, 10, nine_nine_sample_ablating_cache)
+
+clean_ten_zero = get_output_of_head(10, 0)
+clean_ten_two = get_output_of_head(10, 2)
+clean_ten_six = get_output_of_head(10, 6)
+clean_ten_ten = get_output_of_head(10, 10)
+
+nine_nine_output = get_output_of_head(9, 9, clean_cache)
+nine_six_output = get_output_of_head(9, 6, clean_cache)
+# %%
+def backup_loss_metric(current_head_output, ablated_output, abs = True):
+    # find logit diff of current head output and ablated output
+    assert current_head_output.shape == ablated_output.shape
+    cur_head_logit_diff = residual_stack_to_logit_diff(current_head_output, nine_nine_sample_ablating_cache, include_incorrect= INCLUDE_INCORRECT)
+    ablated_logit_diff = residual_stack_to_logit_diff(ablated_output, nine_nine_sample_ablating_cache, include_incorrect=INCLUDE_INCORRECT)
+
+    if abs:
+        return (ablated_logit_diff - cur_head_logit_diff).abs()
+    else:
+        return ablated_logit_diff - cur_head_logit_diff
+
+def perp_to_IO_metric(vector, direction = unembed_io_directions):
+    assert len(direction.shape) == 2
+    if len(vector.shape) != 2:
+        vector = einops.repeat(vector, "d_model -> batch d_model", batch = direction.shape[0]).clone().to(device)
+    return F.cosine_similarity(vector, unembed_io_directions, dim=-1).mean(0).abs()
+
+def normalize_metric(vector):
+    # push down norm of vector
+    return einops.einsum(vector, vector, "d_model, d_model -> ") / 100
+
+# %% start by trying to train a single vector that we hope controls for backup across all batch examples
+if True:
+  learned_vectors = []
 
 
+
+for i in tqdm(range(4)):
+    trained_vector = torch.randn(model.cfg.d_model, requires_grad=True, device = device)
+    optimizer = torch.optim.Adam([trained_vector], lr=0.1)
+
+    for i in range(700):
+        optimizer.zero_grad()
+        repeated_learned_vector = einops.repeat(trained_vector, "d_model -> batch d_model", batch = nine_nine_output.shape[0])
+
+        # part 1 -- the removing vector should ACTIVATE backup
+        new_residual_stream = resid_mid_layer_nine.clone()
+        new_residual_stream[:, -1, :] = new_residual_stream[:, -1, :] - get_projection(nine_nine_output, repeated_learned_vector)
+
+        new_residual_stream = new_residual_stream + model.blocks[9].mlp(model.blocks[9].ln2(new_residual_stream))
+        new_residual_stream = model.blocks[10].ln1(new_residual_stream)
+
+
+
+        # part 2 -- simulate new head outputs
+        ten_two_output = simulate_head(new_residual_stream, 10, 2)[:, -1, :]
+        ten_six_output = simulate_head(new_residual_stream, 10, 6)[:, -1, :]
+        ten_ten_output = simulate_head(new_residual_stream, 10, 10)[:, -1, :]
+        ten_zero_output = simulate_head(new_residual_stream, 10, 0)[:, -1, :]
+
+        # part 3 -- if you constrain the heads output to ONLY this, it shouldn't activate backup
+        second_residual_stream = resid_mid_layer_nine.clone()
+        second_residual_stream[:, -1, :] = second_residual_stream[:, -1, :] - nine_nine_output + get_projection(nine_nine_output, repeated_learned_vector)
+        second_residual_stream = second_residual_stream + model.blocks[9].mlp(model.blocks[9].ln2(second_residual_stream))
+        second_residual_stream = model.blocks[10].ln1(second_residual_stream)
+
+        ten_two_output_second = simulate_head(second_residual_stream, 10, 2)[:, -1, :]
+        ten_six_output_second = simulate_head(second_residual_stream, 10, 6)[:, -1, :]
+        ten_ten_output_second = simulate_head(second_residual_stream, 10, 10)[:, -1, :]
+        ten_zero_output_second = simulate_head(second_residual_stream, 10, 0)[:, -1, :]
+
+
+        # part 4 - get losses on other constraints
+        perp_io_loss = perp_to_IO_metric(repeated_learned_vector, direction = unembed_io_directions)
+        activate_loss = backup_loss_metric(ten_two_output, ablated_output = sample_ablate_ten_two) + backup_loss_metric(ten_six_output, ablated_output = sample_ablate_ten_six) + backup_loss_metric(ten_ten_output, ablated_output = sample_ablate_ten_ten) + backup_loss_metric(ten_zero_output, ablated_output = sample_ablate_ten_zero)
+        silence_loss = backup_loss_metric(ten_two_output_second, ablated_output = clean_ten_two) + backup_loss_metric(ten_six_output_second, ablated_output = clean_ten_six) + backup_loss_metric(ten_ten_output_second, ablated_output = clean_ten_ten) + backup_loss_metric(ten_zero_output_second, ablated_output = clean_ten_zero)
+
+        loss = activate_loss + 2 * silence_loss + perp_io_loss + normalize_metric(trained_vector)
+
+        # part 5 - standard training stuff
+        loss.backward()
+        optimizer.step()
+    
+    learned_vectors.append(trained_vector.detach().cpu())
+
+torch.set_grad_enabled(False)
+# %% calculate the cosine similarities between the vectors in learned_vectors
+
+cosine_similarities = torch.zeros((len(learned_vectors), len(learned_vectors)))
+for i in range(len(learned_vectors)):
+     for j in range(len(learned_vectors)):
+        cosine_similarities[i][j] = (F.cosine_similarity(learned_vectors[i], learned_vectors[j], dim=0))
+
+imshow(cosine_similarities, title = "cos sims between the learned 'backup vectors'", width = 600
+       )
+# %% get length of trained vector
+for vec in learned_vectors:
+  print(einops.einsum(vec, vec, "d_model, d_model -> "))
+print(einops.einsum(nine_nine_output, nine_nine_output, "batch d_model, batch d_model -> batch").mean(0))
+# %% get perpendicularity to IO direction
+for vec in learned_vectors:
+  print(perp_to_IO_metric(vec))
+# %% Display a bunch of these ldds given the intervention, in relation to other ones
+key_backup_heads = [(10,0), (10,2), (10,6), (10,10)]
+def compare_intervention_ldds_with_sample_ablated(all_ldds, ldds_names, heads = key_backup_heads, just_logits = False):
+    results = torch.zeros((len(all_ldds), len(heads)))
+
+
+    if just_logits:
+        for ldd_index, compare_ldds in enumerate(all_ldds):
+            for i, head in enumerate(heads):
+                #print(head)
+                results[ldd_index, i] = ((compare_ldds[head[0], head[1]]).item()) # / noise_sample_ablating_results[head[0], head[1]]).item())
+    else:
+        pass
+        # for ldd_index, compare_ldds in enumerate(all_ldds):
+        #     for i, head in enumerate(heads):
+        #         #print(head)
+        #         results[ldd_index, i] = ((compare_ldds[head[0], head[1]] / noise_sample_ablating_results[head[0], head[1]]).item())
+
+    return imshow(
+        results,
+        #facet_col = 0,
+        #labels = [f"Head {head}" for head in key_backup_heads],
+        title=f"The {'Ratio of Backup (Logit Diff Diff)' if not just_logits else 'Logit Diff Diffs'} of Intervention" + ("to Sample Ablation Backup" if not just_logits else ""),
+        labels={"x": "Receiver Head", "y": "Intervention", "color": "Ratio of Logit Diff Diff to Sample Ablation" if not just_logits else "Logit Diff Diff"},
+        #coloraxis=dict(colorbar_ticksuffix = "%"),
+        # range of y-axis color from 0 to 2
+        #color_continuous_scale="mint",
+        #color_continuous_midpoint=1 if not just_logits else 0,
+        # give x-axis labels
+        x = [str(head) for head in heads],
+        y = ldds_names,
+        border=True,
+        width=900,
+        height = 50 * len(all_ldds) + 300,
+        margin={"r": 100, "l": 100},
+        # show the values of the results above the heatmap
+        text_auto = True,
+        return_fig = True
+    )
+
+first_intervention = run_interventions()
+# %%
+just_mystery_vectors = []
+away_mystery_vectors = []
+
+for vec in learned_vectors:
+  repeated_trained_vector = einops.repeat(vec, "d_model -> batch d_model", batch = nine_nine_output.shape[0]).to(device)
+
+  just_mystery_vectors.append(project_stuff_on_heads([(9,9)], repeated_trained_vector, project_only = True, scale_proj = 1, output = "get_ldd", freeze_ln=True))
+  away_mystery_vectors.append(project_stuff_on_heads([(9,9)], repeated_trained_vector, project_only = False, scale_proj = 1, output = "get_ldd", freeze_ln=True))
+
+just_9_6 = project_stuff_on_heads( [(9,9)], nine_six_output, project_only = True, scale_proj = 1, output = "get_ldd", freeze_ln=True)
+just_9_9 = project_stuff_on_heads([(9,9)], nine_nine_output, project_only = True, scale_proj = 1, output = "get_ldd", freeze_ln=True)
+away_just_9_6 = project_stuff_on_heads([(9,9)], nine_six_output, project_only = False, scale_proj = 1, output = "get_ldd", freeze_ln=True)
+away_just_9_9 = project_stuff_on_heads([(9,9)], nine_nine_output, project_only = False, scale_proj = 1, output = "get_ldd", freeze_ln=True)
+# %%
+
+activate_interventions = {
+    "Clean Run" : calc_all_logit_contibutions(clean_cache, per_prompt = False, include_incorrect=INCLUDE_INCORRECT) - calc_all_logit_contibutions(clean_cache, per_prompt = False, include_incorrect=INCLUDE_INCORRECT),
+    #"Sample Ablation of NMHs" : noise_sample_ablating_results,
+    "Sample Ablation of (9.6)" : calc_all_logit_contibutions(nine_nine_sample_ablating_cache, per_prompt = False, include_incorrect=INCLUDE_INCORRECT) - calc_all_logit_contibutions(clean_cache, per_prompt = False, include_incorrect=INCLUDE_INCORRECT),
+    "Zero Ablation of NMHs" : first_intervention[0],
+    #"Project Only IO Direction (Zero ⊥ IO direction)" : first_intervention[1],
+    #"Replace ⊥ IO directions with Corrupted ⊥ IO directions" : first_intervention[2],
+    #"Project Away IO Direction (Zero IO direction)" : first_intervention[3],
+    #"Replace IO directions with Corrupted IO directions" : first_intervention[4],
+
+
+    "Project Only (9.6)" : just_9_6,
+    "Project Away (9.6)" : away_just_9_6,
+    "Project Only (9.9)" : just_9_9,
+    "Project Away (9.9)" : away_just_9_9,
+    #"Projecting Only (9.6 ∥ 9.9) ∥ IO" : ldd_from_96_99_feature_and_parra_to_io,
+    #"Projecting Away (9.6 ∥ 9.9) ∥ IO" : ldd_from_away_96_99_feature_and_parra_to_io,
+    #"Project Only (9.6 ∥ 9.9)" : overlap_9_6_9_9,
+    #"Project Away (9.6 ∥ 9.9)" : away_overlap_9_6_9_9,
+    #"Just the Learned Vector" : just_mystery_vector,
+    #"Project Away the Learned Vector" : away_mystery_vector
+}
+
+for i, results in enumerate(just_mystery_vectors):
+    activate_interventions["just " + str(i)] = results
+
+for i, results in enumerate(away_mystery_vectors):
+    activate_interventions["away " + str(i)] = results
+
+
+# %%
+row_labels = [str(i) for i in activate_interventions.keys()]
+values = [activate_interventions[key] for key in activate_interventions.keys()]
+
+fig = compare_intervention_ldds_with_sample_ablated(values, row_labels, heads = key_backup_heads , just_logits = True) # + neg_m_heads
+fig.show()
+# %%
