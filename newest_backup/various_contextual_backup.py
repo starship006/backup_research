@@ -48,10 +48,6 @@ logit_diff_directions = model.tokens_to_residual_directions(full_answer_tokens)[
 
 print(utils.lm_accuracy(clean_logits, clean_tokens))
 print(utils.lm_cross_entropy_loss(clean_logits, clean_tokens))
-
-
-
-
 # %% Helper Functions
 
 def topk_of_Nd_tensor(tensor: Float[Tensor, "rows cols"], k: int):
@@ -371,14 +367,15 @@ print(corrupt_per_prompt_logits)
 display_all_logits(cache = clean_cache, title = "Logit Contributions on Clean Dataset", return_fig = False, logits = clean_logits, include_incorrect = INCLUDE_INCORRECT)
 # %% Ablate the NMHs!
 
-def dir_effects_from_sample_ablating_head(ablate_heads):
+def dir_effects_from_sample_ablating_head(ablate_heads, zero = False):
     """this function gets the new cache of all the heads when sample ablating the input head
     it uses the global cache, owt_tokens, corrupted_owt_tokens
     """
 
-    
-    new_cache = act_patch(model, clean_tokens, [Node("z", layer, head) for (layer,head) in ablate_heads],
-                            return_item, corrupt_tokens, apply_metric_to_cache= True)
+    if not zero:
+        new_cache = act_patch(model, clean_tokens, [Node("z", layer, head) for (layer,head) in ablate_heads], return_item, corrupt_tokens, apply_metric_to_cache= True)
+    else:
+        new_cache = act_patch(model, clean_tokens, [Node("z", layer, head) for (layer,head) in ablate_heads], return_item, new_cache = "zero", apply_metric_to_cache= True)
     return new_cache
 
 
@@ -413,11 +410,12 @@ def path_patch_to_and_display(heads, include_incorrect = INCLUDE_INCORRECT):
 # %%
 path_patch_to_and_display([[9,9]], include_incorrect=INCLUDE_INCORRECT)
 # %%
+# %%
 #path_patch_to_and_display([[9,6], [9,9]])
 
 
 display_all_logits(dir_effects_from_sample_ablating_head([[9,6], [9,9]]), title = "Sample ablating in 9.9 and 9.6, Logit Diffs", comparison=True, include_incorrect=INCLUDE_INCORRECT)
-
+display_all_logits(dir_effects_from_sample_ablating_head([[9,6], [9,9]], zero = True), title = "Zero ablating in 9.9 and 9.6, Logit Diffs", comparison=True, include_incorrect=INCLUDE_INCORRECT)
 
 # %% function that looks at the backup activation on a specific prompt
 def backup_activation_on_prompt(prompt_index, cache = None, per_head_contribution = None, include_incorrect = INCLUDE_INCORRECT):
@@ -831,6 +829,12 @@ model.reset_hooks()
 replace_all_perp_IOs_logit_contributions = calc_all_logit_contibutions(replace_with_new_perp_IO_cache)
 display_all_logits(replace_with_new_perp_IO_cache, comparison = True, title = f"Logit Diff Diff from Clean - Mean in heads 9.6 and 9.9", include_incorrect=INCLUDE_INCORRECT)
 
+# %%
+
+# get cossim between two clean_outputs
+for i in range(10):
+    print(F.cosine_similarity(clean_outputs[1], clean_outputs[i], dim = -1))
+
 # %% Try adding back in the IO directions into the sample ablated stuff?
 model.reset_hooks()
 if ln_on:  freeze_ln_from_layer(9)
@@ -933,8 +937,8 @@ def replace_resid_stream_hook(resid_stream, hook, resid_stream_to_replace_with):
     resid_stream = resid_stream_to_replace_with.clone()
     return resid_stream
 
-clone_layer = 9
-into_layer = 10
+clone_layer = 10
+into_layer = 11
 model.reset_hooks()
 resid_pre_10 = clean_cache[utils.get_act_name("resid_pre", clone_layer)].clone()
 model.add_hook(utils.get_act_name("resid_pre", into_layer), partial(replace_resid_stream_hook, resid_stream_to_replace_with = resid_pre_10))
@@ -1224,6 +1228,11 @@ clean_ten_ten = get_output_of_head(10, 10)
 
 nine_nine_output = get_output_of_head(9, 9, clean_cache)
 nine_six_output = get_output_of_head(9, 6, clean_cache)
+
+
+combined_vector = torch.zeros(model.cfg.d_model, device = device).cuda()
+for vector in nine_nine_output:
+    combined_vector += vector
 # %%
 def backup_loss_metric(current_head_output, ablated_output, abs = True):
     # find logit diff of current head output and ablated output
@@ -1237,7 +1246,9 @@ def backup_loss_metric(current_head_output, ablated_output, abs = True):
         return ablated_logit_diff - cur_head_logit_diff
 
 def perp_to_IO_metric(vector, direction = unembed_io_directions):
-    assert len(direction.shape) == 2
+    if len(direction.shape) != 2:
+        direction = einops.repeat(direction, "d_model -> batch d_model", batch = vector.shape[0]).clone().to(device)
+    
     if len(vector.shape) != 2:
         vector = einops.repeat(vector, "d_model -> batch d_model", batch = direction.shape[0]).clone().to(device)
     return F.cosine_similarity(vector, unembed_io_directions, dim=-1).mean(0).abs()
@@ -1252,7 +1263,7 @@ if True:
 
 
 
-for i in tqdm(range(4)):
+for epoch in tqdm(range(5)):
     trained_vector = torch.randn(model.cfg.d_model, requires_grad=True, device = device)
     optimizer = torch.optim.Adam([trained_vector], lr=0.1)
 
@@ -1288,11 +1299,12 @@ for i in tqdm(range(4)):
 
 
         # part 4 - get losses on other constraints
-        perp_io_loss = perp_to_IO_metric(repeated_learned_vector, direction = unembed_io_directions)
+        
+        perp_io_loss = perp_to_IO_metric(repeated_learned_vector, direction = unembed_io_directions) + perp_to_IO_metric(repeated_learned_vector, direction = combined_vector)
         activate_loss = backup_loss_metric(ten_two_output, ablated_output = sample_ablate_ten_two) + backup_loss_metric(ten_six_output, ablated_output = sample_ablate_ten_six) + backup_loss_metric(ten_ten_output, ablated_output = sample_ablate_ten_ten) + backup_loss_metric(ten_zero_output, ablated_output = sample_ablate_ten_zero)
         silence_loss = backup_loss_metric(ten_two_output_second, ablated_output = clean_ten_two) + backup_loss_metric(ten_six_output_second, ablated_output = clean_ten_six) + backup_loss_metric(ten_ten_output_second, ablated_output = clean_ten_ten) + backup_loss_metric(ten_zero_output_second, ablated_output = clean_ten_zero)
 
-        loss = activate_loss + 2 * silence_loss + perp_io_loss + normalize_metric(trained_vector)
+        loss = activate_loss + 2 * silence_loss + perp_io_loss * 10 ** epoch + normalize_metric(trained_vector)
 
         # part 5 - standard training stuff
         loss.backward()
@@ -1308,8 +1320,7 @@ for i in range(len(learned_vectors)):
      for j in range(len(learned_vectors)):
         cosine_similarities[i][j] = (F.cosine_similarity(learned_vectors[i], learned_vectors[j], dim=0))
 
-imshow(cosine_similarities, title = "cos sims between the learned 'backup vectors'", width = 600
-       )
+imshow(cosine_similarities, title = "cos sims between the learned 'backup vectors'", width = 600)
 # %% get length of trained vector
 for vec in learned_vectors:
   print(einops.einsum(vec, vec, "d_model, d_model -> "))
@@ -1373,7 +1384,6 @@ just_9_9 = project_stuff_on_heads([(9,9)], nine_nine_output, project_only = True
 away_just_9_6 = project_stuff_on_heads([(9,9)], nine_six_output, project_only = False, scale_proj = 1, output = "get_ldd", freeze_ln=True)
 away_just_9_9 = project_stuff_on_heads([(9,9)], nine_nine_output, project_only = False, scale_proj = 1, output = "get_ldd", freeze_ln=True)
 # %%
-
 activate_interventions = {
     "Clean Run" : calc_all_logit_contibutions(clean_cache, per_prompt = False, include_incorrect=INCLUDE_INCORRECT) - calc_all_logit_contibutions(clean_cache, per_prompt = False, include_incorrect=INCLUDE_INCORRECT),
     #"Sample Ablation of NMHs" : noise_sample_ablating_results,
@@ -1410,4 +1420,16 @@ values = [activate_interventions[key] for key in activate_interventions.keys()]
 
 fig = compare_intervention_ldds_with_sample_ablated(values, row_labels, heads = key_backup_heads , just_logits = True) # + neg_m_heads
 fig.show()
+# %%
+
+# is this learned vector just all the outputs summed together LOL
+grow_vector = torch.zeros(model.cfg.d_model, device = device).cuda()
+cos_sims = []
+for vector in nine_nine_output:
+    grow_vector += vector
+    cos_sims.append(F.cosine_similarity(grow_vector, learned_vectors[4].cuda(), dim = -1).item())
+
+# %%
+line(torch.Tensor(cos_sims))
+
 # %%
