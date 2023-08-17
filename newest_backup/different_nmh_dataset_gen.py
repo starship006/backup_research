@@ -653,6 +653,7 @@ def generate_dataset(model, NUM_PROMPTS, TOTAL_TYPES):
 
 
 def generate_four_IOI_types(model, NUM_PROMPTS_PER_TYPE):
+
     objects = [
     "perfume",
     "scissors",
@@ -1107,3 +1108,527 @@ def generate_four_IOI_types(model, NUM_PROMPTS_PER_TYPE):
         ))
     
     return ABB, ABA, BAA, BAB, names
+
+
+
+
+
+
+def generate_four_IOI_types_plus_offset_intro(model, NUM_PROMPTS_PER_TYPE):
+
+    
+    objects = [
+    "perfume",
+    "scissors",
+    "drum",
+    "trumpet",
+    "phone",
+    "football",
+    "token",
+    "bracelet",
+    "badge",
+    "novel",
+    "pillow",
+    "coffee",
+    "skirt",
+    "balloon",
+    "photo",
+    "plate",
+    "headphones",
+    "flask",
+    "menu",
+    "compass",
+    "belt",
+    "wallet",
+    "pen",
+    "mask",
+    "ticket",
+    "suitcase",
+    "sunscreen",
+    "letter",
+    "torch",
+    "cocktail",
+    "spoon",
+    "comb",
+    "shirt",
+    "coin",
+    "cable",
+    "button",
+    "recorder",
+    "frame",
+    "key",
+    "card",
+    "canvas",
+    "packet",
+    "bowl",
+    "receipt",
+    "pan",
+    "report",
+    "book",
+    "cap",
+    "charger",
+    "rake",
+    "fork",
+    "map",
+    "soap",
+    "cash",
+    "whistle",
+    "rope",
+    "violin",
+    "scale",
+    "diary",
+    "ruler",
+    "mouse",
+    "toy",
+    "cd",
+    "dress",
+    "shampoo",
+    "flashlight",
+    "newspaper",
+    "puzzle",
+    "tripod",
+    "brush",
+    "cane",
+    "whisk",
+    "tablet",
+    "purse",
+    "paper",
+    "vinyl",
+    "camera",
+    "guitar",
+    "necklace",
+    "mirror",
+    "cup",
+    "cloth",
+    "flag",
+    "socks",
+    "shovel",
+    "cooler",
+    "hammer",
+    "shoes",
+    "chalk",
+    "wrench",
+    "towel",
+    "glove",
+    "speaker",
+    "remote",
+    "leash",
+    "magazine",
+    "notebook",
+    "candle",
+    "feather",
+    "gloves",
+    "mascara",
+    "charcoal",
+    "pills",
+    "laptop",
+    "pamphlet",
+    "knife",
+    "kettle",
+    "scarf",
+    "tie",
+    "goggles",
+    "fins",
+    "lipstick",
+    "shorts",
+    "joystick",
+    "bookmark",
+    "microphone",
+    "hat",
+    "pants",
+    "umbrella",
+    "harness",
+    "roller",
+    "blanket",
+    "folder",
+    "bag",
+    "crate",
+    "pot",
+    "watch",
+    "mug",
+    "sandwich",
+    "yarn",
+    "ring",
+    "backpack",
+    "glasses",
+    "pencil",
+    "broom",
+    "baseball",
+    "basket",
+    "loaf",
+    "coins",
+    "bakery",
+    "tape",
+    "helmet",
+    "bible",
+    "jacket"
+    ]
+
+    names = [
+    " Sebastian",
+    " Jack",
+    " Jeremiah",
+    " Ellie",
+    " Sean",
+    " William",
+    " Caroline",
+    " Cooper",
+    " Xavier",
+    " Ian",
+    " Mark",
+    " Brian",
+    " Carter",
+    " Nicholas",
+    " Peyton",
+    " Luke",
+    " Alexis",
+    " Ted",
+    " Jan",
+    " Ty",
+    " Jen",
+    " Sophie",
+    " Kelly",
+    " Claire",
+    " Leo",
+    " Nolan",
+    " Kyle",
+    " Ashley",
+    " Samantha",
+    " Avery",
+    " Jackson",
+    " Hudson",
+    " Rebecca",
+    " Robert",
+    " Joshua",
+    " Olivia",
+    " Reagan",
+    " Lauren",
+    " Chris",
+    " Chelsea",
+    " Deb",
+    " Chloe",
+    " Madison",
+    " Kent",
+    " Thomas",
+    " Oliver",
+    " Dylan",
+    " Ann",
+    " Audrey",
+    " Greg",
+    " Henry",
+    " Emma",
+    " Josh",
+    " Mary",
+    " Daniel",
+    " Carl",
+    " Scarlett",
+    " Ethan",
+    " Levi",
+    " Eli",
+    " James",
+    " Patrick",
+    " Isaac",
+    " Brooke",
+    " Alexa",
+    " Eleanor",
+    " Anthony",
+    " Logan",
+    " Damian",
+    " Jordan",
+    " Tyler",
+    " Haley",
+    " Isabel",
+    " Alan",
+    " Lucas",
+    " Dave",
+    " Susan",
+    " Joseph",
+    " Brad",
+    " Joe",
+    " Vincent",
+    " Maya",
+    " Will",
+    " Jessica",
+    " Sophia",
+    " Angel",
+    " Steve",
+    " Benjamin",
+    " Eric",
+    " Cole",
+    " Justin",
+    " Amy",
+    " Nora",
+    " Seth",
+    " Anna",
+    " Stella",
+    " Frank",
+    " Larry",
+    " Alexandra",
+    " Ken",
+    " Lucy",
+    " Katherine",
+    " Leah",
+    " Adrian",
+    " David",
+    " Liam",
+    " Christian",
+    " John",
+    " Nathaniel",
+    " Andrea",
+    " Laura",
+    " Kim",
+    " Kevin",
+    " Colin",
+    " Marcus",
+    " Emily",
+    " Sarah",
+    " Steven",
+    " Eva",
+    " Richard",
+    " Faith",
+    " Amelia",
+    " Harper",
+    " Keith",
+    " Ross",
+    " Megan",
+    " Brooklyn",
+    " Tom",
+    " Grant",
+    " Savannah",
+    " Riley",
+    " Julia",
+    " Piper",
+    " Wyatt",
+    " Jake",
+    " Nathan",
+    " Nick",
+    " Blake",
+    " Ryan",
+    " Jason",
+    " Chase",]
+
+    places = [
+    "swamp",
+    "school",
+    "volcano",
+    "hotel",
+    "subway",
+    "arcade",
+    "library",
+    "island",
+    "convent",
+    "pool",
+    "mall",
+    "prison",
+    "quarry",
+    "temple",
+    "ruins",
+    "factory",
+    "zoo",
+    "mansion",
+    "tavern",
+    "planet",
+    "forest",
+    "airport",
+    "pharmacy",
+    "church",
+    "park",
+    "delta",
+    "mosque",
+    "valley",
+    "casino",
+    "pyramid",
+    "aquarium",
+    "castle",
+    "ranch",
+    "clinic",
+    "theater",
+    "gym",
+    "studio",
+    "station",
+    "palace",
+    "stadium",
+    "museum",
+    "plateau",
+    "home",
+    "resort",
+    "garage",
+    "reef",
+    "lounge",
+    "chapel",
+    "canyon",
+    "brewery",
+    "market",
+    "jungle",
+    "office",
+    "cottage",
+    "street",
+    "gallery",
+    "landfill",
+    "glacier",
+    "barracks",
+    "bakery",
+    "synagogue",
+    "jersey",
+    "plaza",
+    "garden",
+    "cafe",
+    "cinema",
+    "beach",
+    "harbor",
+    "circus",
+    "bridge",
+    "monastery",
+    "desert",
+    "tunnel",
+    "motel",
+    "fortress"
+    ]
+
+    prefixs = [
+        "Yesterday",
+        "Today",
+        "Clearly",
+        "Sadly",
+        "Basically",
+        "Hopefully",
+        "Then",  
+        "For" ]
+    
+
+
+    one_token_no_space_names = [] # names for which the no-space, lower case version of it is also a single token
+    
+    for name in names:
+        shortened_name = name.lower().replace(" ", "")
+        if len(model.to_str_tokens(shortened_name, prepend_bos=False)) == 1:
+            one_token_no_space_names.append(name)
+
+    lower_case_still_same_name = []
+    for name in names:
+        lower_name = name.lower()
+        if len(model.to_str_tokens(lower_name, prepend_bos=False)) == 1:
+            lower_case_still_same_name.append(name)
+
+    one_token_objects = []
+    for obj in objects:
+        longer_obj = " " + obj
+        if len(model.to_str_tokens(longer_obj, prepend_bos=False)) == 1:
+            one_token_objects.append(longer_obj)
+
+    one_token_places = []
+    for place in places:
+        longer_place = " " + place
+        if len(model.to_str_tokens(longer_place, prepend_bos=False)) == 1:
+            one_token_places.append(longer_place)
+
+    one_token_names = []
+
+    for name in names:
+        longer_name = name
+        if len(model.to_str_tokens(longer_name, prepend_bos=False)) == 1:
+            one_token_names.append(longer_name)
+
+
+    IOI_template = "When{name_A} and{name_B} went to the{place},{name_C} gave the{object} to"
+    ONE_WORD_template = "{prefix} when{name_A} and{name_B} went to the{place},{name_C} gave the{object} to"
+
+    names = []
+    ABB = []
+    ABA = []
+    BAA = []
+    BAB = []
+    
+    # intro with one word
+    ONE_WORD_ABB = []
+    ONE_WORD_ABA = []
+    ONE_WORD_BAA = []
+    ONE_WORD_BAB = []
+
+
+    for i in range(NUM_PROMPTS_PER_TYPE):
+        name_A = one_token_names[random.randint(0, len(one_token_names) - 1)]
+        # generate name B that is different than A
+        name_B = one_token_names[random.randint(0, len(one_token_names) - 1)]
+        while name_B == name_A:
+            name_B = one_token_names[random.randint(0, len(one_token_names) - 1)]
+
+
+        names.append((name_A, name_B))
+        place_A = one_token_places[random.randint(0, len(one_token_places) - 1)]
+        object_A = one_token_objects[random.randint(0, len(one_token_objects) - 1)]
+        prefix_A = prefixs[random.randint(0, len(prefixs) - 1)]
+
+        ABB.append(IOI_template.format(
+            name_A = name_A,
+            name_B = name_B,
+            name_C = name_B,
+            place = place_A,
+            object = object_A
+        ))
+
+        ONE_WORD_ABB.append(ONE_WORD_template.format(
+            prefix = prefix_A,
+            name_A = name_A,
+            name_B = name_B,
+            name_C = name_B,
+            place = place_A,
+            object = object_A
+        ))
+        
+
+        ABA.append(IOI_template.format(
+            name_A = name_A,
+            name_B = name_B,
+            name_C = name_A,
+            place = place_A,
+            object = object_A
+        ))
+
+        ONE_WORD_ABA.append(ONE_WORD_template.format(
+            prefix = prefix_A,
+            name_A = name_A,
+            name_B = name_B,
+            name_C = name_A,
+            place = place_A,
+            object = object_A
+        ))
+
+
+        BAA.append(IOI_template.format(
+            name_A = name_B,
+            name_B = name_A,
+            name_C = name_A,
+            place = place_A,
+            object = object_A
+        ))
+
+        ONE_WORD_BAA.append(ONE_WORD_template.format(
+            prefix = prefix_A,
+            name_A = name_B,
+            name_B = name_A,
+            name_C = name_A,
+            place = place_A,
+            object = object_A
+        ))
+
+
+        BAB.append(IOI_template.format(
+            name_A = name_B,
+            name_B = name_A,
+            name_C = name_B,
+            place = place_A,
+            object = object_A
+        ))
+
+        ONE_WORD_BAB.append(ONE_WORD_template.format(
+            prefix = prefix_A,
+            name_A = name_B,
+            name_B = name_A,
+            name_C = name_B,
+            place = place_A,
+            object = object_A
+        ))
+    
+    
+    return ABB, ABA, BAA, BAB, names, ONE_WORD_ABB, ONE_WORD_ABA, ONE_WORD_BAA, ONE_WORD_BAB
