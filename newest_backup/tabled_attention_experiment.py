@@ -74,48 +74,7 @@ def get_effective_embedding(model: HookedTransformer) -> Float[Tensor, "d_vocab 
         "W_E (including MLPs)": W_EE_full,
         "W_E (only MLPs)": W_EE,
         "Cody MLP": W_ONLY_MLP,
-    }
-
-# %%
-
-def qk_composition_score(
-        query_side: Float[Tensor, "d_model"],
-        key_side: Float[Tensor, "d_model"],
-        backup_head: Tuple
-):
-    W_Q = model.W_Q[backup_head[0], backup_head[1]]
-    W_K = model.W_K[backup_head[0], backup_head[1]]
-    return einops.repeat(query_side, "d_model -> 1 d_model") @ W_Q @ W_K.T @ key_side    
-
-# %%
-# attention scores on distribution
-W_E = get_effective_embedding(model)["W_E (no MLPs)"]
-name_mover_head = (9, 6)
-self_repair_head = (10, 0)
-layer_key = 10
-
-diff_key_side_resid_streams = torch.zeros(4, clean_tokens.shape[-1])
-
-ln_before_sr_head = model.blocks[self_repair_head[0]].ln1
-resid_pre_before_sr_head = clean_cache[utils.get_act_name("resid_pre", self_repair_head[0])]
-
-for prompt_type in range(4):
-    for pos in range(clean_tokens.shape[-1]):
-        score = 0
-        for batch in range(NUM_PROMPT_PER_TYPE):            
-            prompt = batch + prompt_type * NUM_PROMPT_PER_TYPE
-            nmh_output = clean_cache[utils.get_act_name("result", name_mover_head[0])][prompt, -1, name_mover_head[1]]
-
-            key_side = ln_before_sr_head(resid_pre_before_sr_head[prompt, pos])
-            query_side =  ln_before_sr_head(nmh_output)
-            score += qk_composition_score(query_side, key_side, self_repair_head).item()
-        diff_key_side_resid_streams[prompt_type, pos] = score / NUM_PROMPT_PER_TYPE
-
-imshow(diff_key_side_resid_streams,
-       x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))],
-       y=PROMPT_TYPES,
-       title = f"query = output of 9.9 in distribution key = position attention in {self_repair_head}")
-# %% 
+    } 
 
 def get_projection(from_vector, to_vector):
     if from_vector.shape == to_vector.shape and len(from_vector.shape) == 2:
@@ -164,6 +123,47 @@ def TestGetProjection():
 
 if __name__ == '__main__':
     TestGetProjection()
+
+def qk_composition_score(
+        query_side: Union[Float[Tensor, "d_model"], Float[Tensor, "batch d_model"]],
+        key_side: Float[Tensor, "d_model"],
+        backup_head: Tuple
+):
+    W_Q = model.W_Q[backup_head[0], backup_head[1]]
+    W_K = model.W_K[backup_head[0], backup_head[1]]
+    if query_side.shape == key_side.shape and len(query_side.shape) == 1:
+        return einops.repeat(query_side, "d_model -> 1 d_model") @ W_Q @ W_K.T @ key_side    
+    elif len(query_side.shape) == 1 and len(key_side.shape) == 2:
+        return einops.rearrange(query_side, "d_model -> 1 d_model") @ W_Q @ W_K.T @ einops.rearrange(key_side, "batch d_model -> d_model batch")
+
+# %% attention scores on distribution
+W_E = get_effective_embedding(model)["W_E (no MLPs)"]
+name_mover_head = (9, 6)
+self_repair_head = (10, 2)
+layer_key = 10
+
+diff_key_side_resid_streams = torch.zeros(4, clean_tokens.shape[-1])
+
+ln_before_sr_head = model.blocks[self_repair_head[0]].ln1
+resid_pre_before_sr_head = clean_cache[utils.get_act_name("resid_pre", self_repair_head[0])]
+
+for prompt_type in range(4):
+    for pos in range(clean_tokens.shape[-1]):
+        score = 0
+        for batch in range(NUM_PROMPT_PER_TYPE):            
+            prompt = batch + prompt_type * NUM_PROMPT_PER_TYPE
+            nmh_output = clean_cache[utils.get_act_name("result", name_mover_head[0])][prompt, -1, name_mover_head[1]]
+
+            key_side = ln_before_sr_head(resid_pre_before_sr_head[prompt, pos])
+            query_side =  ln_before_sr_head(nmh_output)
+            score += qk_composition_score(query_side, key_side, self_repair_head).item()
+        diff_key_side_resid_streams[prompt_type, pos] = score / NUM_PROMPT_PER_TYPE
+
+imshow(diff_key_side_resid_streams,
+       x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))],
+       y=PROMPT_TYPES,
+       title = f"query = output of 9.9 in distribution key = position attention in {self_repair_head}")
+
 
 # %% attention scores when projecting onto IO token
 projected_diff_key_side_resid_streams = torch.zeros(4, clean_tokens.shape[-1])
@@ -279,9 +279,10 @@ imshow(projected_diff_key_side_resid_streams,
 # %% see if this is a positional thing or a positional + token unembedding thing
 
 results = torch.zeros(clean_tokens.shape[-1], 4)
+prompt_group = 3
 
 for prompt in range(NUM_PROMPT_PER_TYPE):
-    nmh_output = clean_cache[utils.get_act_name("result", name_mover_head[0])][prompt, -1, name_mover_head[1]]
+    nmh_output = clean_cache[utils.get_act_name("result", name_mover_head[0])][prompt + NUM_PROMPT_PER_TYPE * prompt_group, -1, name_mover_head[1]]
 
     for pos in range(clean_tokens.shape[-1]):
         score = 0
@@ -291,9 +292,78 @@ for prompt in range(NUM_PROMPT_PER_TYPE):
             key_side = ln_before_sr_head(resid_pre_before_sr_head[prompt + NUM_PROMPT_PER_TYPE * key_prompt, pos])
             query_side =  ln_before_sr_head(nmh_output)
             results[pos, key_prompt] += qk_composition_score(query_side, key_side, self_repair_head).item()
-        
 
+
+imshow(results.T / NUM_PROMPT_PER_TYPE, x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))], y=PROMPT_TYPES, title = f"query = output of 9.9 from {PROMPT_TYPES[prompt_group]}, key = resid from different distributions, head = {self_repair_head}")
+# %%
+# # try a single prompt out with a bunch with different names 
+# prompt_group = 0
+# diff_name_results = torch.zeros(2, clean_tokens.shape[-1]) # same-token, opposite-token
+
+# for prompt in tqdm(range(1, NUM_PROMPT_PER_TYPE)):
+#     nmh_output = clean_cache[utils.get_act_name("result", name_mover_head[0])][prompt + NUM_PROMPT_PER_TYPE * prompt_group, -1, name_mover_head[1]]
+#     query_side =  ln_before_sr_head(nmh_output)
+#     for pos in range(clean_tokens.shape[-1]):
+#         resid_pre_before_sr_head = clean_cache[utils.get_act_name("resid_pre", 10)]
+#         for other_prompt in range(1, NUM_PROMPT_PER_TYPE):
+#             key_side = ln_before_sr_head(resid_pre_before_sr_head[other_prompt + NUM_PROMPT_PER_TYPE * prompt_group, pos])
+#             if prompt == other_prompt:
+#                 diff_name_results[0, pos] += qk_composition_score(query_side, key_side, self_repair_head).item()
+#             else:
+#                 diff_name_results[1, pos] += qk_composition_score(query_side, key_side, self_repair_head).item()
+
+# # %%
+# diff_name_results[0] /= (NUM_PROMPT_PER_TYPE)
+# diff_name_results[1] /= (NUM_PROMPT_PER_TYPE * (NUM_PROMPT_PER_TYPE - 1))
+# imshow(diff_name_results, x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))], y=["normal", "diff names"], title = f"query = output of 9.9 from {PROMPT_TYPES[prompt_group]}, key = resid from same or different distribution, head = {self_repair_head}")
 
 # %%
-imshow(results.T, x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))], y=PROMPT_TYPES, title = f"query = output of 9.9 from ABB, key = resid from different distributions, head = {self_repair_head}")
+prompt_group = 2
+diff_name_results = torch.zeros(2, clean_tokens.shape[-1]) # same-token, opposite-token
+
+for prompt in tqdm(range(1, NUM_PROMPT_PER_TYPE)):
+    nmh_output = clean_cache[utils.get_act_name("result", name_mover_head[0])][prompt + NUM_PROMPT_PER_TYPE * prompt_group, -1, name_mover_head[1]]
+    query_side =  ln_before_sr_head(nmh_output)
+    for pos in range(clean_tokens.shape[-1]):
+        resid_pre_before_sr_head = clean_cache[utils.get_act_name("resid_pre", 10)]
+        other_prompts: Float[Tensor, "typesize pos"] = resid_pre_before_sr_head[NUM_PROMPT_PER_TYPE * prompt_group: NUM_PROMPT_PER_TYPE * (prompt_group + 1), pos]
+        key_side = ln_before_sr_head(other_prompts)
+        
+        total_score: Float[Tensor, "1 typesize"] = qk_composition_score(query_side, key_side, self_repair_head)
+
+
+        diff_name_results[0, pos] += total_score[0, prompt].sum().item()
+        diff_name_results[1, pos] += total_score[0].sum().item() - total_score[0, prompt].item()
+# %%
+diff_name_results[0] /= (NUM_PROMPT_PER_TYPE)
+diff_name_results[1] /= (NUM_PROMPT_PER_TYPE) * (NUM_PROMPT_PER_TYPE - 1)
+imshow(diff_name_results, x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))], y=["normal", "diff names"], title = f"query = output of 9.9 from {PROMPT_TYPES[prompt_group]}, key = resid from same or different distribution, head = {self_repair_head}")
+# %% test MLP output on attentions cores
+
+W_E = get_effective_embedding(model)["W_E (no MLPs)"]
+name_mover_head = (9, 6)
+self_repair_layer = 9
+layer_key = 10
+
+diff_key_side_resid_streams = torch.zeros(4, clean_tokens.shape[-1])
+ln_before_sr_head = model.blocks[self_repair_head[0]].ln1
+resid_pre_before_sr_head = clean_cache[utils.get_act_name("resid_pre", self_repair_head[0])]
+
+for prompt_type in range(4):
+    for pos in range(clean_tokens.shape[-1]):
+        score = 0
+        for batch in range(NUM_PROMPT_PER_TYPE):            
+            prompt = batch + prompt_type * NUM_PROMPT_PER_TYPE
+            nmh_output = clean_cache[f"blocks.{self_repair_layer}.hook_mlp_out"][prompt, -1]
+
+            key_side = ln_before_sr_head(resid_pre_before_sr_head[prompt, pos])
+            query_side =  ln_before_sr_head(nmh_output)
+            score += qk_composition_score(query_side, key_side, self_repair_head).item()
+        diff_key_side_resid_streams[prompt_type, pos] = score / NUM_PROMPT_PER_TYPE
+
+imshow(diff_key_side_resid_streams,
+       x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))],
+       y=PROMPT_TYPES,
+       title = f"query = output of layer {self_repair_layer} in distribution key = position attention in {self_repair_head}")
+
 # %%
