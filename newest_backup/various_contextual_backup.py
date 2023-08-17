@@ -539,12 +539,14 @@ def store_activation(
 def get_projection(from_vector, to_vector):
     dot_product = einops.einsum(from_vector, to_vector, "batch d_model, batch d_model -> batch")
     #print("Average Dot Product of Output Across Batch: " + str(dot_product.mean(0)))
-    length_of_from_vector = einops.einsum(from_vector, from_vector, "batch d_model, batch d_model -> batch")
-    length_of_vector = einops.einsum(to_vector, to_vector, "batch d_model, batch d_model -> batch")
-    projected_lengths = (dot_product) / (length_of_vector)
-    #print( einops.repeat(projected_lengths, "batch -> batch d_model", d_model = model.cfg.d_model)[0])
+    #length_of_from_vector = einops.einsum(from_vector, from_vector, "batch d_model, batch d_model -> batch")
+    squared_length_of_vector = einops.einsum(to_vector, to_vector, "batch d_model, batch d_model -> batch")
+    projected_lengths = (dot_product) / (squared_length_of_vector)
     projections = to_vector * einops.repeat(projected_lengths, "batch -> batch d_model", d_model = to_vector.shape[-1])
     return projections
+
+
+
 
 def project_vector_operation(
     original_resid_stream: Float[Tensor, "batch seq head_idx d_model"],
@@ -1254,8 +1256,27 @@ def perp_to_IO_metric(vector, direction = unembed_io_directions):
     return F.cosine_similarity(vector, unembed_io_directions, dim=-1).mean(0).abs()
 
 def normalize_metric(vector):
-    # push down norm of vector
-    return einops.einsum(vector, vector, "d_model, d_model -> ") / 100
+    #get length of vector
+    return torch.norm(vector, dim = -1).mean(0).abs()
+
+def get_batch_vectors_to_be_similar(vector):
+    assert len(vector.shape) == 2
+    # get a random set of indices
+    indices = torch.randint(vector.shape[0], (int(vector.shape[0]/ 2),))
+    # get the subvector
+    subvector = vector[indices]
+    # get everything else
+    everything_else = vector[~indices]
+
+    # shrink larger vector to smaller vector size
+    size_of_smaller = subvector.shape[0] if subvector.shape[0] < everything_else.shape[0] else everything_else.shape[0]
+    subvector = subvector[:size_of_smaller]
+    everything_else = everything_else[:size_of_smaller]
+
+
+    return 1 - F.cosine_similarity(subvector.cuda(), everything_else.cuda(), dim = -1).abs().mean(0)
+
+
 
 # %% start by trying to train a single vector that we hope controls for backup across all batch examples
 if True:
@@ -1263,13 +1284,13 @@ if True:
 
 
 
-for epoch in tqdm(range(5)):
-    trained_vector = torch.randn(model.cfg.d_model, requires_grad=True, device = device)
+for epoch in tqdm(range(6)):
+    trained_vector = torch.randn((clean_tokens.shape[0], model.cfg.d_model), requires_grad=True, device = device)
     optimizer = torch.optim.Adam([trained_vector], lr=0.1)
 
     for i in range(700):
         optimizer.zero_grad()
-        repeated_learned_vector = einops.repeat(trained_vector, "d_model -> batch d_model", batch = nine_nine_output.shape[0])
+        repeated_learned_vector = trained_vector#inops.repeat(trained_vector, "d_model -> batch d_model", batch = nine_nine_output.shape[0])
 
         # part 1 -- the removing vector should ACTIVATE backup
         new_residual_stream = resid_mid_layer_nine.clone()
@@ -1303,8 +1324,11 @@ for epoch in tqdm(range(5)):
         perp_io_loss = perp_to_IO_metric(repeated_learned_vector, direction = unembed_io_directions) + perp_to_IO_metric(repeated_learned_vector, direction = combined_vector)
         activate_loss = backup_loss_metric(ten_two_output, ablated_output = sample_ablate_ten_two) + backup_loss_metric(ten_six_output, ablated_output = sample_ablate_ten_six) + backup_loss_metric(ten_ten_output, ablated_output = sample_ablate_ten_ten) + backup_loss_metric(ten_zero_output, ablated_output = sample_ablate_ten_zero)
         silence_loss = backup_loss_metric(ten_two_output_second, ablated_output = clean_ten_two) + backup_loss_metric(ten_six_output_second, ablated_output = clean_ten_six) + backup_loss_metric(ten_ten_output_second, ablated_output = clean_ten_ten) + backup_loss_metric(ten_zero_output_second, ablated_output = clean_ten_zero)
+        similarity_loss = get_batch_vectors_to_be_similar(repeated_learned_vector)
 
-        loss = activate_loss + 2 * silence_loss + perp_io_loss * 10 ** epoch + normalize_metric(trained_vector)
+        print(activate_loss, silence_loss, normalize_metric(trained_vector), similarity_loss)
+
+        loss = activate_loss + 2 * silence_loss + normalize_metric(trained_vector) / 20 + similarity_loss * 5 ** epoch# perp_io_loss * 7 * epoch
 
         # part 5 - standard training stuff
         loss.backward()
@@ -1318,16 +1342,16 @@ torch.set_grad_enabled(False)
 cosine_similarities = torch.zeros((len(learned_vectors), len(learned_vectors)))
 for i in range(len(learned_vectors)):
      for j in range(len(learned_vectors)):
-        cosine_similarities[i][j] = (F.cosine_similarity(learned_vectors[i], learned_vectors[j], dim=0))
+        cosine_similarities[i][j] = (F.cosine_similarity(learned_vectors[i], learned_vectors[j], dim=-1).mean(0))
 
 imshow(cosine_similarities, title = "cos sims between the learned 'backup vectors'", width = 600)
 # %% get length of trained vector
 for vec in learned_vectors:
-  print(einops.einsum(vec, vec, "d_model, d_model -> "))
+  print(einops.einsum(vec, vec, "batch d_model, batch d_model -> batch").mean(0))
 print(einops.einsum(nine_nine_output, nine_nine_output, "batch d_model, batch d_model -> batch").mean(0))
 # %% get perpendicularity to IO direction
 for vec in learned_vectors:
-  print(perp_to_IO_metric(vec))
+  print(perp_to_IO_metric(vec.cuda()))
 # %% Display a bunch of these ldds given the intervention, in relation to other ones
 key_backup_heads = [(10,0), (10,2), (10,6), (10,10)]
 def compare_intervention_ldds_with_sample_ablated(all_ldds, ldds_names, heads = key_backup_heads, just_logits = False):
@@ -1374,7 +1398,7 @@ just_mystery_vectors = []
 away_mystery_vectors = []
 
 for vec in learned_vectors:
-  repeated_trained_vector = einops.repeat(vec, "d_model -> batch d_model", batch = nine_nine_output.shape[0]).to(device)
+  repeated_trained_vector = vec.to(device)#einops.repeat(vec, "d_model -> batch d_model", batch = nine_nine_output.shape[0]).to(device)
 
   just_mystery_vectors.append(project_stuff_on_heads([(9,9)], repeated_trained_vector, project_only = True, scale_proj = 1, output = "get_ldd", freeze_ln=True))
   away_mystery_vectors.append(project_stuff_on_heads([(9,9)], repeated_trained_vector, project_only = False, scale_proj = 1, output = "get_ldd", freeze_ln=True))
@@ -1427,9 +1451,28 @@ grow_vector = torch.zeros(model.cfg.d_model, device = device).cuda()
 cos_sims = []
 for vector in nine_nine_output:
     grow_vector += vector
-    cos_sims.append(F.cosine_similarity(grow_vector, learned_vectors[4].cuda(), dim = -1).item())
+    cos_sims.append(F.cosine_similarity(grow_vector, learned_vectors[0].cuda(), dim = -1).item())
 
 # %%
 line(torch.Tensor(cos_sims))
 
 # %%
+version = 5
+F.cosine_similarity(learned_vectors[version].cuda(), unembed_io_directions, dim = -1).mean(0)
+
+a = [F.cosine_similarity(learned_vectors[version][i].cuda(), unembed_io_directions[i], dim = -1).item() for i in range(unembed_io_directions.shape[0])]
+average = sum(a) / len(a)
+print(average)
+
+
+print(get_batch_vectors_to_be_similar(1 - learned_vectors[version].cuda()))
+
+cossin_between_different_batches = torch.zeros((len(learned_vectors[0]), len(learned_vectors[0])))
+
+for i in range(len(learned_vectors[0])):
+    for j in range(len(learned_vectors[0])):
+        cossin_between_different_batches[i][j] = F.cosine_similarity(learned_vectors[version][i].cuda(), learned_vectors[version][j].cuda(), dim = -1).item()
+
+imshow(cossin_between_different_batches[0:30, 0:30])
+# %%
+
