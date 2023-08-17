@@ -13,7 +13,7 @@
 # !pip install 
 #!pip install plotly fancy_einsum jaxtyping transformers datasets transformer_lens
 from imports import *
-from different_nmh_dataset_gen import generate_dataset, generate_four_IOI_types, generate_four_IOI_types_plus_offset_intro
+from different_nmh_dataset_gen import generate_dataset, generate_four_IOI_types, generate_four_IOI_types_plus_offset_intro, generate_four_IOI_types_plus_offset_intro_AND_intro_name
 import unittest
 # %%
 model_name = "gpt2-small"
@@ -28,12 +28,12 @@ model = HookedTransformer.from_pretrained(
 model.set_use_attn_result(True)
 # %% 
 torch.cuda.empty_cache()
-NUM_PROMPT_PER_TYPE = 200
+NUM_PROMPT_PER_TYPE = 100
 NUM_PROMPTS = NUM_PROMPT_PER_TYPE * 4
-ABB, ABA, BAA, BAB, NAMES, ONE_WORD_ABB, ONE_WORD_ABA, ONE_WORD_BAA, ONE_WORD_BAB = generate_four_IOI_types_plus_offset_intro(model, NUM_PROMPT_PER_TYPE)
+ABB, ABA, BAA, BAB, NAMES, ONE_WORD_ABB, ONE_WORD_ABA, ONE_WORD_BAA, ONE_WORD_BAB, PREFIX_NAME_ABB, PREFIX_NAME_ABA, PREFIX_NAME_BAA, PREFIX_NAME_BAB = generate_four_IOI_types_plus_offset_intro_AND_intro_name(model, NUM_PROMPT_PER_TYPE)
 
 
-PROMPTS = ABB + ABA + BAA + BAB + ONE_WORD_ABB + ONE_WORD_ABA + ONE_WORD_BAA + ONE_WORD_BAB
+PROMPTS = ABB + ABA + BAA + BAB + ONE_WORD_ABB + ONE_WORD_ABA + ONE_WORD_BAA + ONE_WORD_BAB + PREFIX_NAME_ABB + PREFIX_NAME_ABA + PREFIX_NAME_BAA + PREFIX_NAME_BAB
 INDEX_FIRST_NAME = 2
 INDEX_SECOND_NAME = 4
 INDEX_PREDICTION = 14
@@ -336,8 +336,8 @@ print("divider")
 
 # %%
 
-def test_head_out_on_diff_prompts(name_mover_head, self_repair_head, prompt_group = 1):
-    diff_name_results = torch.zeros(4, clean_tokens.shape[-1]) # same-token, opposite-token
+def test_head_out_on_diff_prompts(name_mover_head, self_repair_head, prompt_group = 0):
+    diff_name_results = torch.zeros(6, clean_tokens.shape[-1]) # same-token, opposite-token
     ln_before_sr_head = model.blocks[self_repair_head[0]].ln1
 
 
@@ -348,27 +348,35 @@ def test_head_out_on_diff_prompts(name_mover_head, self_repair_head, prompt_grou
             resid_pre_before_sr_head = clean_cache[utils.get_act_name("resid_pre", 10)]
             other_prompts: Float[Tensor, "typesize pos"] = resid_pre_before_sr_head[NUM_PROMPT_PER_TYPE * prompt_group: NUM_PROMPT_PER_TYPE * (prompt_group + 1), pos]
             extra_word_prompts: Float[Tensor, "typesize pos"] = resid_pre_before_sr_head[NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES)): NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES) + 1), pos]
+            extra_name_prompts: Float[Tensor, "typesize pos"] = resid_pre_before_sr_head[NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES) * 2): NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES) * 2 + 1), pos]
+
 
             key_side = ln_before_sr_head(other_prompts)
             extra_word_key_side = ln_before_sr_head(extra_word_prompts)
+            extra_name_key_side = ln_before_sr_head(extra_name_prompts)
 
             
             total_score: Float[Tensor, "1 typesize"] = qk_composition_score(query_side, key_side, self_repair_head)
             extra_word_total_score: Float[Tensor, "1 typesize"] = qk_composition_score(query_side, extra_word_key_side, self_repair_head)
+            extra_name_total_score: Float[Tensor, "1 typesize"] = qk_composition_score(query_side, extra_name_key_side, self_repair_head)
 
 
             diff_name_results[0, pos] += total_score[0, prompt].sum().item()
             diff_name_results[1, pos] += total_score[0].sum().item() - total_score[0, prompt].item()
             diff_name_results[2, pos] += extra_word_total_score[0, prompt].sum().item()
             diff_name_results[3, pos] += extra_word_total_score[0].sum().item() - extra_word_total_score[0, prompt].item()
+            diff_name_results[4, pos] += extra_name_total_score[0, prompt].sum().item()
+            diff_name_results[5, pos] += extra_name_total_score[0].sum().item() - extra_name_total_score[0, prompt].item()
 
 
     diff_name_results[0] /= (NUM_PROMPT_PER_TYPE)
     diff_name_results[1] /= (NUM_PROMPT_PER_TYPE) * (NUM_PROMPT_PER_TYPE - 1)
     diff_name_results[2] /= (NUM_PROMPT_PER_TYPE)
     diff_name_results[3] /= (NUM_PROMPT_PER_TYPE) * (NUM_PROMPT_PER_TYPE - 1)
+    diff_name_results[4] /= (NUM_PROMPT_PER_TYPE)
+    diff_name_results[5] /= (NUM_PROMPT_PER_TYPE) * (NUM_PROMPT_PER_TYPE - 1)
 
-    imshow(diff_name_results, x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))], y=["normal", "diff names", "prefix normal", "prefix diff names"], title = f"query = output of 9.9 from {PROMPT_TYPES[prompt_group]}, key = resid from same or different distribution, head = {self_repair_head}")
+    imshow(diff_name_results, x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))], y=["normal", "diff names", "prefix normal", "prefix diff names", "normal first name", "normal diff names"], title = f"query = output of 9.9 from {PROMPT_TYPES[prompt_group]}, key = resid from same or different distribution, head = {self_repair_head}")
 
-test_head_out_on_diff_prompts(name_mover_head=(9, 6), self_repair_head=(10, 2))
+test_head_out_on_diff_prompts(name_mover_head=(9, 6), self_repair_head=(10, 0))
 # %%
