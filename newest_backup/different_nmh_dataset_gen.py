@@ -1497,7 +1497,6 @@ def generate_four_IOI_types_plus_offset_intro(model, NUM_PROMPTS_PER_TYPE):
         "For" ]
     
 
-
     one_token_no_space_names = [] # names for which the no-space, lower case version of it is also a single token
     
     for name in names:
@@ -2067,6 +2066,7 @@ def generate_four_IOI_types_plus_offset_intro_AND_intro_name(model, NUM_PROMPTS_
     IOI_template = "When{name_A} and{name_B} went to the{place},{name_C} gave the{object} to"
     ONE_WORD_template = "{prefix} when{name_A} and{name_B} went to the{place},{name_C} gave the{object} to"
     PREFIX_NAME_template = "{name_P} when{name_A} and{name_B} went to the{place},{name_C} gave the{object} to"
+    IOI_PREFIX_NAME_template = "{name_A} when{name_P} and{name_P} went to the{place},{name_P} gave the{object} to"
 
     names = []
     ABB = []
@@ -2086,6 +2086,11 @@ def generate_four_IOI_types_plus_offset_intro_AND_intro_name(model, NUM_PROMPTS_
     PREFIX_NAME_BAA = []
     PREFIX_NAME_BAB = []
 
+    # intro with IOI as prefix name
+    IOI_PREFIX_NAME_ABB = []
+    IOI_PREFIX_NAME_ABA = []
+    IOI_PREFIX_NAME_BAA = []
+    IOI_PREFIX_NAME_BAB = []
 
 
 
@@ -2112,111 +2117,57 @@ def generate_four_IOI_types_plus_offset_intro_AND_intro_name(model, NUM_PROMPTS_
         object_A = one_token_objects[random.randint(0, len(one_token_objects) - 1)]
         prefix_A = prefixs[random.randint(0, len(prefixs) - 1)]
 
-        ABB.append(IOI_template.format(
-            name_A = name_A,
-            name_B = name_B,
-            name_C = name_B,
-            place = place_A,
-            object = object_A
-        ))
+        ABB_const = {
+            "name_A": name_A,
+            "name_B": name_B,
+            "name_C": name_B,
+        }
 
-        ONE_WORD_ABB.append(ONE_WORD_template.format(
-            prefix = prefix_A,
-            name_A = name_A,
-            name_B = name_B,
-            name_C = name_B,
-            place = place_A,
-            object = object_A
-        ))
+        ABA_const = {
+            "name_A": name_A,
+            "name_B": name_B,
+            "name_C": name_A,
+        }
 
+        BAA_const = {
+            "name_A": name_B,
+            "name_B": name_A,
+            "name_C": name_A,
+        }
 
-        PREFIX_NAME_ABB.append(PREFIX_NAME_template.format(
-            name_P = name_C,
-            name_A = name_A,
-            name_B = name_B,
-            name_C = name_B,
-            place = place_A,
-            object = object_A
-        ))
-        
+        BAB_const = {
+            "name_A": name_B,
+            "name_B": name_A,
+            "name_C": name_B,
+        }
 
-        ABA.append(IOI_template.format(
-            name_A = name_A,
-            name_B = name_B,
-            name_C = name_A,
-            place = place_A,
-            object = object_A
-        ))
+        shared_const = {
+            "place": place_A,
+            "object": object_A,
+            "prefix": prefix_A,
+            "name_P": name_C
+        }
 
-        ONE_WORD_ABA.append(ONE_WORD_template.format(
-            prefix = prefix_A,
-            name_A = name_A,
-            name_B = name_B,
-            name_C = name_A,
-            place = place_A,
-            object = object_A
-        ))
+        ABB.append(IOI_template.format(**ABB_const, **shared_const))
+        ONE_WORD_ABB.append(ONE_WORD_template.format(**ABB_const, **shared_const))
+        PREFIX_NAME_ABB.append(PREFIX_NAME_template.format(**ABB_const, **shared_const))
+        IOI_PREFIX_NAME_ABB.append(IOI_PREFIX_NAME_template.format(**ABB_const, **shared_const))
 
-        PREFIX_NAME_ABA.append(PREFIX_NAME_template.format(
-            name_P = name_C,
-            name_A = name_A,
-            name_B = name_B,
-            name_C = name_A,
-            place = place_A,
-            object = object_A
-        ))
+        ABA.append(IOI_template.format(**ABA_const, **shared_const))
+        ONE_WORD_ABA.append(ONE_WORD_template.format(**ABA_const, **shared_const))
+        PREFIX_NAME_ABA.append(PREFIX_NAME_template.format(**ABA_const, **shared_const))
+        IOI_PREFIX_NAME_ABA.append(IOI_PREFIX_NAME_template.format(**ABA_const, **shared_const))
 
 
-        BAA.append(IOI_template.format(
-            name_A = name_B,
-            name_B = name_A,
-            name_C = name_A,
-            place = place_A,
-            object = object_A
-        ))
-
-        ONE_WORD_BAA.append(ONE_WORD_template.format(
-            prefix = prefix_A,
-            name_A = name_B,
-            name_B = name_A,
-            name_C = name_A,
-            place = place_A,
-            object = object_A
-        ))
-
-        PREFIX_NAME_BAA.append(PREFIX_NAME_template.format(
-            name_P = name_C,
-            name_A = name_B,
-            name_B = name_A,
-            name_C = name_A,
-            place = place_A,
-            object = object_A
-        ))
+        BAA.append(IOI_template.format(**BAA_const, **shared_const))
+        ONE_WORD_BAA.append(ONE_WORD_template.format(**BAA_const, **shared_const))
+        PREFIX_NAME_BAA.append(PREFIX_NAME_template.format(**BAA_const, **shared_const))
+        IOI_PREFIX_NAME_BAA.append(IOI_PREFIX_NAME_template.format(**BAA_const, **shared_const))
 
 
-        BAB.append(IOI_template.format(
-            name_A = name_B,
-            name_B = name_A,
-            name_C = name_B,
-            place = place_A,
-            object = object_A
-        ))
+        BAB.append(IOI_template.format(**BAB_const, **shared_const))
+        ONE_WORD_BAB.append(ONE_WORD_template.format(**BAB_const, **shared_const))
+        PREFIX_NAME_BAB.append(PREFIX_NAME_template.format(**BAB_const, **shared_const))
+        IOI_PREFIX_NAME_BAB.append(IOI_PREFIX_NAME_template.format(**BAB_const, **shared_const))
 
-        ONE_WORD_BAB.append(ONE_WORD_template.format(
-            prefix = prefix_A,
-            name_A = name_B,
-            name_B = name_A,
-            name_C = name_B,
-            place = place_A,
-            object = object_A
-        ))
-    
-        PREFIX_NAME_BAB.append(PREFIX_NAME_template.format(
-            name_P = name_C,
-            name_A = name_B,
-            name_B = name_A,
-            name_C = name_B,
-            place = place_A,
-            object = object_A
-        )) 
-    return ABB, ABA, BAA, BAB, names, ONE_WORD_ABB, ONE_WORD_ABA, ONE_WORD_BAA, ONE_WORD_BAB, PREFIX_NAME_ABB, PREFIX_NAME_ABA, PREFIX_NAME_BAA, PREFIX_NAME_BAB
+    return ABB, ABA, BAA, BAB, names, ONE_WORD_ABB, ONE_WORD_ABA, ONE_WORD_BAA, ONE_WORD_BAB, PREFIX_NAME_ABB, PREFIX_NAME_ABA, PREFIX_NAME_BAA, PREFIX_NAME_BAB, IOI_PREFIX_NAME_ABB, IOI_PREFIX_NAME_ABA, IOI_PREFIX_NAME_BAA, IOI_PREFIX_NAME_BAB

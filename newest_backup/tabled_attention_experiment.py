@@ -28,12 +28,13 @@ model = HookedTransformer.from_pretrained(
 model.set_use_attn_result(True)
 # %% 
 torch.cuda.empty_cache()
-NUM_PROMPT_PER_TYPE = 100
+NUM_PROMPT_PER_TYPE = 120
 NUM_PROMPTS = NUM_PROMPT_PER_TYPE * 4
-ABB, ABA, BAA, BAB, NAMES, ONE_WORD_ABB, ONE_WORD_ABA, ONE_WORD_BAA, ONE_WORD_BAB, PREFIX_NAME_ABB, PREFIX_NAME_ABA, PREFIX_NAME_BAA, PREFIX_NAME_BAB = generate_four_IOI_types_plus_offset_intro_AND_intro_name(model, NUM_PROMPT_PER_TYPE)
+ABB, ABA, BAA, BAB, NAMES, ONE_WORD_ABB, ONE_WORD_ABA, ONE_WORD_BAA, ONE_WORD_BAB, PREFIX_NAME_ABB, PREFIX_NAME_ABA, PREFIX_NAME_BAA, PREFIX_NAME_BAB, IOI_PREFIX_NAME_ABB, IOI_PREFIX_NAME_ABA, IOI_PREFIX_NAME_BAA, IOI_PREFIX_NAME_BAB = generate_four_IOI_types_plus_offset_intro_AND_intro_name(model, NUM_PROMPT_PER_TYPE)
 
 
-PROMPTS = ABB + ABA + BAA + BAB + ONE_WORD_ABB + ONE_WORD_ABA + ONE_WORD_BAA + ONE_WORD_BAB + PREFIX_NAME_ABB + PREFIX_NAME_ABA + PREFIX_NAME_BAA + PREFIX_NAME_BAB
+#PROMPTS = ABB + ABA + BAA + BAB + ONE_WORD_ABB + ONE_WORD_ABA + ONE_WORD_BAA + ONE_WORD_BAB + PREFIX_NAME_ABB + PREFIX_NAME_ABA + PREFIX_NAME_BAA + PREFIX_NAME_BAB + IOI_PREFIX_NAME_ABB + IOI_PREFIX_NAME_ABA + IOI_PREFIX_NAME_BAA + IOI_PREFIX_NAME_BAB
+PROMPTS = ABB + ABA + BAA + BAB + ONE_WORD_ABB + ONE_WORD_ABA + ONE_WORD_BAA + ONE_WORD_BAB + PREFIX_NAME_ABB + PREFIX_NAME_ABA + PREFIX_NAME_BAA + PREFIX_NAME_BAB + IOI_PREFIX_NAME_ABB + IOI_PREFIX_NAME_ABA + IOI_PREFIX_NAME_BAA + IOI_PREFIX_NAME_BAB
 INDEX_FIRST_NAME = 2
 INDEX_SECOND_NAME = 4
 INDEX_PREDICTION = 14
@@ -337,46 +338,51 @@ print("divider")
 # %%
 
 def test_head_out_on_diff_prompts(name_mover_head, self_repair_head, prompt_group = 0):
-    diff_name_results = torch.zeros(6, clean_tokens.shape[-1]) # same-token, opposite-token
+    
+    # CHANGE THIS FIRST: number of different versions
+    num_different_combinations = 8
+    variations = ["normal", "diff names", "prefix normal", "prefix diff names", "normal first name", "normal diff names", "prefix=IO token", "prefix=other IO token"]
+
+
+    diff_name_results = torch.zeros((num_different_combinations, clean_tokens.shape[-1])) # same-token, opposite-token
     ln_before_sr_head = model.blocks[self_repair_head[0]].ln1
 
 
-    for prompt in tqdm(range(1, NUM_PROMPT_PER_TYPE)):
+    for prompt in tqdm(range( NUM_PROMPT_PER_TYPE)):
         nmh_output = clean_cache[utils.get_act_name("result", name_mover_head[0])][prompt + NUM_PROMPT_PER_TYPE * prompt_group, INDEX_PREDICTION, name_mover_head[1]]
         query_side =  ln_before_sr_head(nmh_output)
         for pos in range(clean_tokens.shape[-1]):
-            resid_pre_before_sr_head = clean_cache[utils.get_act_name("resid_pre", 10)]
-            other_prompts: Float[Tensor, "typesize pos"] = resid_pre_before_sr_head[NUM_PROMPT_PER_TYPE * prompt_group: NUM_PROMPT_PER_TYPE * (prompt_group + 1), pos]
-            extra_word_prompts: Float[Tensor, "typesize pos"] = resid_pre_before_sr_head[NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES)): NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES) + 1), pos]
-            extra_name_prompts: Float[Tensor, "typesize pos"] = resid_pre_before_sr_head[NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES) * 2): NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES) * 2 + 1), pos]
 
+            resid_pre_before_sr_head = clean_cache[utils.get_act_name("resid_pre", self_repair_head[0])]
+            for variation_type in range(int(num_different_combinations / 2)):
 
-            key_side = ln_before_sr_head(other_prompts)
-            extra_word_key_side = ln_before_sr_head(extra_word_prompts)
-            extra_name_key_side = ln_before_sr_head(extra_name_prompts)
+                #print(NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES) * variation_type))
+                #print(NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES) * (variation_type + 1)))
+                prompts: Float[Tensor, "typesize pos"] = resid_pre_before_sr_head[NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES) * variation_type): NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES) * variation_type + 1), pos]
+                #print(prompts.shape)
+                key_side = ln_before_sr_head(prompts)
+                score: Float[Tensor, "1 typesize"] = qk_composition_score(query_side, key_side, self_repair_head)
+                #print(variation_type)
+                # print(variation_type * 2)
+                # print(pos)
+                # print(diff_name_results.shape)
+                # print(score.shape)
+                diff_name_results[variation_type * 2, pos] += score[0, prompt].sum().item()
+                diff_name_results[variation_type * 2 + 1, pos] += score[0].sum().item() - score[0, prompt].item()
+    
+    for variation_type in range(int(num_different_combinations / 2)):
+        diff_name_results[variation_type * 2] /= (NUM_PROMPT_PER_TYPE)
+        diff_name_results[variation_type * 2 + 1] /= (NUM_PROMPT_PER_TYPE) * (NUM_PROMPT_PER_TYPE - 1)
 
-            
-            total_score: Float[Tensor, "1 typesize"] = qk_composition_score(query_side, key_side, self_repair_head)
-            extra_word_total_score: Float[Tensor, "1 typesize"] = qk_composition_score(query_side, extra_word_key_side, self_repair_head)
-            extra_name_total_score: Float[Tensor, "1 typesize"] = qk_composition_score(query_side, extra_name_key_side, self_repair_head)
+    imshow(diff_name_results, x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))], y=variations, title = f"query = output of {name_mover_head} from {PROMPT_TYPES[prompt_group]}, key = resid from same or different distribution, head = {self_repair_head}")
+    return diff_name_results
+# %%
 
+aggregate_results = torch.zeros((6, clean_tokens.shape[-1]))
+for i in [9,6]:
+    test_head_out_on_diff_prompts(name_mover_head=(9, i), self_repair_head=(10, 0), prompt_group=0)
 
-            diff_name_results[0, pos] += total_score[0, prompt].sum().item()
-            diff_name_results[1, pos] += total_score[0].sum().item() - total_score[0, prompt].item()
-            diff_name_results[2, pos] += extra_word_total_score[0, prompt].sum().item()
-            diff_name_results[3, pos] += extra_word_total_score[0].sum().item() - extra_word_total_score[0, prompt].item()
-            diff_name_results[4, pos] += extra_name_total_score[0, prompt].sum().item()
-            diff_name_results[5, pos] += extra_name_total_score[0].sum().item() - extra_name_total_score[0, prompt].item()
-
-
-    diff_name_results[0] /= (NUM_PROMPT_PER_TYPE)
-    diff_name_results[1] /= (NUM_PROMPT_PER_TYPE) * (NUM_PROMPT_PER_TYPE - 1)
-    diff_name_results[2] /= (NUM_PROMPT_PER_TYPE)
-    diff_name_results[3] /= (NUM_PROMPT_PER_TYPE) * (NUM_PROMPT_PER_TYPE - 1)
-    diff_name_results[4] /= (NUM_PROMPT_PER_TYPE)
-    diff_name_results[5] /= (NUM_PROMPT_PER_TYPE) * (NUM_PROMPT_PER_TYPE - 1)
-
-    imshow(diff_name_results, x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))], y=["normal", "diff names", "prefix normal", "prefix diff names", "normal first name", "normal diff names"], title = f"query = output of 9.9 from {PROMPT_TYPES[prompt_group]}, key = resid from same or different distribution, head = {self_repair_head}")
-
-test_head_out_on_diff_prompts(name_mover_head=(9, 6), self_repair_head=(10, 0))
+# %%
+imshow(aggregate_results, x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))], y=["normal", "diff names", "prefix normal", "prefix diff names", "normal first name", "normal diff names", "prefix=IO token", "prefix=other IO token"]
+, title = f"query = output ofsummed from {PROMPT_TYPES[0]}, key = resid from same or different distribution, head = {'10.0'}")
 # %%
