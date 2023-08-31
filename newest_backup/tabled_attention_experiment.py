@@ -14,7 +14,6 @@
 #!pip install plotly fancy_einsum jaxtyping transformers datasets transformer_lens
 from imports import *
 from different_nmh_dataset_gen import generate_dataset, generate_four_IOI_types, generate_four_IOI_types_plus_offset_intro, generate_four_IOI_types_plus_offset_intro_AND_intro_name
-import unittest
 # %%
 model_name = "gpt2-small"
 model = HookedTransformer.from_pretrained(
@@ -31,7 +30,7 @@ torch.cuda.empty_cache()
 NUM_PROMPT_PER_TYPE = 120
 NUM_PROMPTS = NUM_PROMPT_PER_TYPE * 4
 ABB, ABA, BAA, BAB, NAMES, ONE_WORD_ABB, ONE_WORD_ABA, ONE_WORD_BAA, ONE_WORD_BAB, PREFIX_NAME_ABB, PREFIX_NAME_ABA, PREFIX_NAME_BAA, PREFIX_NAME_BAB, IOI_PREFIX_NAME_ABB, IOI_PREFIX_NAME_ABA, IOI_PREFIX_NAME_BAA, IOI_PREFIX_NAME_BAB = generate_four_IOI_types_plus_offset_intro_AND_intro_name(model, NUM_PROMPT_PER_TYPE)
-
+variations = ["normal", "diff names", "prefix normal", "prefix diff names", "normal first name", "normal diff names", "prefix=IO token", "prefix=other IO token"]
 
 #PROMPTS = ABB + ABA + BAA + BAB + ONE_WORD_ABB + ONE_WORD_ABA + ONE_WORD_BAA + ONE_WORD_BAB + PREFIX_NAME_ABB + PREFIX_NAME_ABA + PREFIX_NAME_BAA + PREFIX_NAME_BAB + IOI_PREFIX_NAME_ABB + IOI_PREFIX_NAME_ABA + IOI_PREFIX_NAME_BAA + IOI_PREFIX_NAME_BAB
 PROMPTS = ABB + ABA + BAA + BAB + ONE_WORD_ABB + ONE_WORD_ABA + ONE_WORD_BAA + ONE_WORD_BAB + PREFIX_NAME_ABB + PREFIX_NAME_ABA + PREFIX_NAME_BAA + PREFIX_NAME_BAB + IOI_PREFIX_NAME_ABB + IOI_PREFIX_NAME_ABA + IOI_PREFIX_NAME_BAA + IOI_PREFIX_NAME_BAB
@@ -144,18 +143,26 @@ def qk_composition_score(
         print(key_side.shape)
         raise Exception("bad shapes")
 # %%
-def test_self_repair_scores(input_layer = None, input_head = None, self_repair_head = (10,2)):
-    W_E = get_effective_embedding(model)["W_E (no MLPs)"]
+def test_self_repair_scores(input_layer = None, input_head = None, self_repair_head = (10,2), fixed_distribution_input = None):
+    
+    """
+    if input_head == None, uses the output of the MLP of the input_layer
+    fixed_distribution_input indicates which distribution to use for the output of the input head; if none, use the one associated for each prompt type
+    """
     
     # make sure only one input
     if input_layer is not None and input_head is not None:
         raise Exception("only one input allowed")
     
 
-    diff_key_side_resid_streams = torch.zeros(4, clean_tokens.shape[-1])
+    # storage container for the scores for each prompt type, for each position
+    diff_key_side_resid_streams: Float[Tensor, "4 seq_len"] = torch.zeros(4, clean_tokens.shape[-1]) 
 
-    ln_before_sr_head = model.blocks[self_repair_head[0]].ln1
+    # get output of self_repair head
     resid_pre_before_sr_head = clean_cache[utils.get_act_name("resid_pre", self_repair_head[0])]
+
+    # get the output of the input layer
+    ln_before_sr_head = model.blocks[self_repair_head[0]].ln1
     cache_results = clean_cache[utils.get_act_name("result", input_head[0])] if input_head is not None else clean_cache[f"blocks.{input_layer}.hook_mlp_out"]
 
 
@@ -165,21 +172,34 @@ def test_self_repair_scores(input_layer = None, input_head = None, self_repair_h
             for batch in range(NUM_PROMPT_PER_TYPE):            
                 prompt = batch + prompt_type * NUM_PROMPT_PER_TYPE
 
-                nmh_output = cache_results[prompt, INDEX_PREDICTION, input_head[1]] if input_head is not None else cache_results[prompt, INDEX_PREDICTION]
+
+                if fixed_distribution_input is None:
+                    nmh_output = cache_results[prompt, INDEX_PREDICTION, input_head[1]] if input_head is not None else cache_results[prompt, INDEX_PREDICTION]
+                else:
+                    input_prompt = batch + fixed_distribution_input * NUM_PROMPT_PER_TYPE
+                    nmh_output = cache_results[input_prompt, INDEX_PREDICTION, input_head[1]] if input_head is not None else cache_results[input_prompt, INDEX_PREDICTION]
+                
                 query_side =  ln_before_sr_head(nmh_output)
 
                 key_side = ln_before_sr_head(resid_pre_before_sr_head[prompt, pos])
                 score += qk_composition_score(query_side, key_side, self_repair_head).item()
             diff_key_side_resid_streams[prompt_type, pos] = score / NUM_PROMPT_PER_TYPE
 
+
+
+    title = f"query = output of {('L' + str(input_layer)) if input_layer != None else input_head} in distribution key = position attention in {self_repair_head}"
+    if fixed_distribution_input is not None:
+        title += " | Input Distribution: " + PROMPT_TYPES[fixed_distribution_input]
+
     imshow(diff_key_side_resid_streams,
         x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))],
         y=PROMPT_TYPES,
-        title = f"query = output of {('L' + str(input_layer)) if input_layer != None else input_head} in distribution key = position attention in {self_repair_head}")
+        title = title)
 
 
-
-test_self_repair_scores(input_head = (10,7), self_repair_head=(11,10))
+# %%
+test_self_repair_scores(input_head = (10,7), self_repair_head=(11,10), fixed_distribution_input = 2)
+# %%
 # # %% attention scores when projecting onto IO token
 # projected_diff_key_side_resid_streams = torch.zeros(4, clean_tokens.shape[-1])
 # for prompt_type in range(4):
@@ -337,11 +357,11 @@ print("divider")
 
 # %%
 
-def test_head_out_on_diff_prompts(name_mover_head, self_repair_head, prompt_group = 0):
+def test_head_out_on_diff_prompts(name_mover_head, self_repair_head, prompt_group = 0, query_side = None):
     
     # CHANGE THIS FIRST: number of different versions
     num_different_combinations = 8
-    variations = ["normal", "diff names", "prefix normal", "prefix diff names", "normal first name", "normal diff names", "prefix=IO token", "prefix=other IO token"]
+    
 
 
     diff_name_results = torch.zeros((num_different_combinations, clean_tokens.shape[-1])) # same-token, opposite-token
@@ -349,24 +369,16 @@ def test_head_out_on_diff_prompts(name_mover_head, self_repair_head, prompt_grou
 
 
     for prompt in tqdm(range( NUM_PROMPT_PER_TYPE)):
-        nmh_output = clean_cache[utils.get_act_name("result", name_mover_head[0])][prompt + NUM_PROMPT_PER_TYPE * prompt_group, INDEX_PREDICTION, name_mover_head[1]]
-        query_side =  ln_before_sr_head(nmh_output)
-        for pos in range(clean_tokens.shape[-1]):
+        if query_side is None:
+            nmh_output = clean_cache[utils.get_act_name("result", name_mover_head[0])][prompt + NUM_PROMPT_PER_TYPE * prompt_group, INDEX_PREDICTION, name_mover_head[1]]
+            query_side =  ln_before_sr_head(nmh_output)
 
+        for pos in range(clean_tokens.shape[-1]):
             resid_pre_before_sr_head = clean_cache[utils.get_act_name("resid_pre", self_repair_head[0])]
             for variation_type in range(int(num_different_combinations / 2)):
-
-                #print(NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES) * variation_type))
-                #print(NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES) * (variation_type + 1)))
                 prompts: Float[Tensor, "typesize pos"] = resid_pre_before_sr_head[NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES) * variation_type): NUM_PROMPT_PER_TYPE * (prompt_group + len(PROMPT_TYPES) * variation_type + 1), pos]
-                #print(prompts.shape)
                 key_side = ln_before_sr_head(prompts)
                 score: Float[Tensor, "1 typesize"] = qk_composition_score(query_side, key_side, self_repair_head)
-                #print(variation_type)
-                # print(variation_type * 2)
-                # print(pos)
-                # print(diff_name_results.shape)
-                # print(score.shape)
                 diff_name_results[variation_type * 2, pos] += score[0, prompt].sum().item()
                 diff_name_results[variation_type * 2 + 1, pos] += score[0].sum().item() - score[0, prompt].item()
     
@@ -378,11 +390,13 @@ def test_head_out_on_diff_prompts(name_mover_head, self_repair_head, prompt_grou
     return diff_name_results
 # %%
 
-aggregate_results = torch.zeros((6, clean_tokens.shape[-1]))
-for i in [9,6]:
-    test_head_out_on_diff_prompts(name_mover_head=(9, i), self_repair_head=(10, 0), prompt_group=0)
+summed_result = test_head_out_on_diff_prompts(name_mover_head=(9, 0), self_repair_head=(10, 0), prompt_group=0)
+
 
 # %%
-imshow(aggregate_results, x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))], y=["normal", "diff names", "prefix normal", "prefix diff names", "normal first name", "normal diff names", "prefix=IO token", "prefix=other IO token"]
-, title = f"query = output ofsummed from {PROMPT_TYPES[0]}, key = resid from same or different distribution, head = {'10.0'}")
+for i in range(1,12):
+    summed_result += test_head_out_on_diff_prompts(name_mover_head=(9, i), self_repair_head=(10, 0), prompt_group=0)
+
+# %%
+imshow(summed_result, x = [(str(i) + "_" + j) for i,j in enumerate(model.to_str_tokens(clean_tokens[1]))], y=variations, title = f"query = output of all heads in layer 9, key = resid from same or different distribution, head = 10.0")
 # %%
