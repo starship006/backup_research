@@ -20,6 +20,8 @@ from pathlib import Path
 from torch.utils.data import DataLoader
 from typing import Union, List, Optional, Callable, Tuple, Dict, Literal, Set
 from jaxtyping import Float, Int
+from jaxtyping import Float, Int, Bool, Shaped, jaxtyped
+import typeguard
 from functools import partial
 import copy
 
