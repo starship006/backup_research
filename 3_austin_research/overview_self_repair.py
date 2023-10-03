@@ -3,16 +3,16 @@ from imports import *
 import argparse
 
 # %%
-# model_name = "EleutherAI/gpt-neo-125M"
+in_notebook_mode = False
+if in_notebook_mode:
+    model_name = "gpt2-small"
+else:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model_name', default='gpt2-small')
+    args = parser.parse_args()
+    model_name = args.model_name
 
-# parser = argparse.ArgumentParser()
-# parser.add_argument('--model_name', default='gpt2-small')
-# args = parser.parse_args()
-
-model_name = "gpt2-small"#args.model_name
 safe_model_name = model_name.replace("/", "_")
-in_notebook_mode = True
-
 model = HookedTransformer.from_pretrained(
     model_name,
     center_unembed = True, 
@@ -24,7 +24,7 @@ model = HookedTransformer.from_pretrained(
 model.set_use_attn_result(True)
 # %%
 owt_dataset = utils.get_dataset("owt")
-BATCH_SIZE = 220
+BATCH_SIZE = 150
 PROMPT_LEN = 50
 
 all_owt_tokens = model.to_tokens(owt_dataset[0:BATCH_SIZE * 2]["text"]).to(device)
@@ -77,7 +77,7 @@ def residual_stack_to_direct_effect(
 
 # test to ensure functions work: compare the predicted direct effect from the residual stack function to the actual direct effect
 last_layer_direct_effect: Float[Tensor, "batch pos_minus_one"] = residual_stack_to_direct_effect(
-    cache["blocks.11.hook_resid_post"],
+    cache[f"blocks.{model.cfg.n_layers - 1}.hook_resid_post"],
     model.tokens_to_residual_directions(owt_tokens),
     )
 
@@ -364,71 +364,71 @@ if in_notebook_mode:
     show_batch_result(27, start = 17, end = 24, per_head_direct_effect = (ablated_de - per_head_direct_effect), all_layer_direct_effect = (ablated_layer_de - all_layer_direct_effect))
 # %%
 
-slopes_of_head_backup = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
-cre_of_heads = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
-for layer in tqdm(range(model.cfg.n_layers)):
-    for head in range(model.cfg.n_heads):
-        slopes_of_head_backup[layer, head] = create_scatter_of_backup_of_component(heads = [(layer, head)], return_slope = True)
-        cre_of_heads[layer, head] = create_scatter_of_backup_of_component(heads = [(layer, head)], return_CRE = True).mean((-2,-1))
+# slopes_of_head_backup = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
+# cre_of_heads = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
+# for layer in tqdm(range(model.cfg.n_layers)):
+#     for head in range(model.cfg.n_heads):
+#         slopes_of_head_backup[layer, head] = create_scatter_of_backup_of_component(heads = [(layer, head)], return_slope = True)
+#         cre_of_heads[layer, head] = create_scatter_of_backup_of_component(heads = [(layer, head)], return_CRE = True).mean((-2,-1))
 
 
-fig = imshow(slopes_of_head_backup, title = f"Slopes of Head Backup in {model_name}",
-       text_auto = True, width = 800, height = 800, return_fig=True) # show a number above each square)
-if in_notebook_mode: 
-    fig.show()
+# fig = imshow(slopes_of_head_backup, title = f"Slopes of Head Backup in {model_name}",
+#        text_auto = True, width = 800, height = 800, return_fig=True) # show a number above each square)
+# if in_notebook_mode: 
+#     fig.show()
 
-# save figure
-fig.write_image(f"slopes_of_head_backup_{safe_model_name}.png")
-
-
-# %%
-# create another figure plotting the cre vs the direct effect of the head
-# Flatten the tensors for plotting
-flattened_avg_direct_effect = per_head_direct_effect.mean((-1,-2)).flatten().cpu().numpy()
-layers_list = [l for l in range(model.cfg.n_layers) for _ in range(model.cfg.n_heads)]
-
-fig2 = go.Figure()
-fig2.add_trace(go.Scatter(
-    x=flattened_avg_direct_effect,
-    y=cre_of_heads.flatten(),
-    mode='markers',
-    marker=dict(
-        size=10,
-        opacity=0.5,
-        line=dict(width=1),
-        color=layers_list,  # Setting color based on layer
-        colorscale='Viridis',  # Using Viridis colorscale, but you can choose any other available colorscale
-        colorbar=dict(title='Layer'),  # Adding a colorbar to denote layers
-    ),
-    text=[f"Layer {l}, Head {h}" for l in range(model.cfg.n_layers) for h in range(model.cfg.n_heads)]
-))
-
-# Add titles and labels
-fig2.update_layout(
-    title=f"Compensatory Response Effect vs Average Direct Effect in {model_name}",
-    xaxis_title="Average Direct Effect",
-    yaxis_title="Average Compensatory Response Effect",
-    hovermode="closest"  # Hover over data points to see the text
-)
-if in_notebook_mode:
-    fig2.show()
+# # save figure
+# fig.write_image(f"slopes_of_head_backup_{safe_model_name}.png")
 
 
-# Save the figure
-fig2.write_image(f"cre_vs_avg_direct_effect_{safe_model_name}.png")
+# # %%
+# # create another figure plotting the cre vs the direct effect of the head
+# # Flatten the tensors for plotting
+# flattened_avg_direct_effect = per_head_direct_effect.mean((-1,-2)).flatten().cpu().numpy()
+# layers_list = [l for l in range(model.cfg.n_layers) for _ in range(model.cfg.n_heads)]
+
+# fig2 = go.Figure()
+# fig2.add_trace(go.Scatter(
+#     x=flattened_avg_direct_effect,
+#     y=cre_of_heads.flatten(),
+#     mode='markers',
+#     marker=dict(
+#         size=10,
+#         opacity=0.5,
+#         line=dict(width=1),
+#         color=layers_list,  # Setting color based on layer
+#         colorscale='Viridis',  # Using Viridis colorscale, but you can choose any other available colorscale
+#         colorbar=dict(title='Layer'),  # Adding a colorbar to denote layers
+#     ),
+#     text=[f"Layer {l}, Head {h}" for l in range(model.cfg.n_layers) for h in range(model.cfg.n_heads)]
+# ))
+
+# # Add titles and labels
+# fig2.update_layout(
+#     title=f"Compensatory Response Effect vs Average Direct Effect in {model_name}",
+#     xaxis_title="Average Direct Effect",
+#     yaxis_title="Average Compensatory Response Effect",
+#     hovermode="closest"  # Hover over data points to see the text
+# )
+# if in_notebook_mode:
+#     fig2.show()
+
+
+# # Save the figure
+# fig2.write_image(f"cre_vs_avg_direct_effect_{safe_model_name}.png")
 
 # %%
 # Do the same thing but for MLP layers
-slopes_of_mlp_backup = torch.zeros((model.cfg.n_layers))
-for layer in tqdm(range(model.cfg.n_layers)):
-    slopes_of_mlp_backup[layer] = create_scatter_of_backup_of_component(mlp_layers = [layer], return_slope = True)
+# slopes_of_mlp_backup = torch.zeros((model.cfg.n_layers))
+# for layer in tqdm(range(model.cfg.n_layers)):
+#     slopes_of_mlp_backup[layer] = create_scatter_of_backup_of_component(mlp_layers = [layer], return_slope = True)
 
-if in_notebook_mode: 
-    fig.show()
+# if in_notebook_mode: 
+#     fig.show()
 # %%
-fig = imshow(einops.repeat(slopes_of_mlp_backup, "a -> a 1"), title = f"Slopes of MLP Backup in {model_name}",
-       text_auto = True, width = 800, height = 800, return_fig=True)# show a number above each square)
-fig.write_image(f"slopes_of_mlp_backup_{safe_model_name}.png")
+# fig = imshow(einops.repeat(slopes_of_mlp_backup, "a -> a 1"), title = f"Slopes of MLP Backup in {model_name}",
+#        text_auto = True, width = 800, height = 800, return_fig=True)# show a number above each square)
+# fig.write_image(f"slopes_of_mlp_backup_{safe_model_name}.png")
 # %%
 
 if in_notebook_mode:
@@ -572,5 +572,129 @@ def create_scatter_of_change_from_component(heads = None, mlp_layers = None, ret
     if return_slope:
         return slope
 # %%
-create_scatter_of_change_from_component(heads = [(9,6)])
+#create_scatter_of_change_from_component(heads = [(9,6)])
+# %%
+
+
+def get_threholded_de_cre(heads = None, mlp_layers = None, thresholds = [0.5]):
+    """"
+    this function calculates direct effect of component on clean and sample ablation,
+    and then returns an averaged direct effect and compensatory response effect of the component
+    of 'significant' tokens, defined as tokens with a direct effect of at least threshold 
+
+
+    heads: list of tuples of (layer, head) to ablate
+        - all heads need to be in same layer for now
+    """
+
+    # don't accept if more than one input is none
+    assert sum([heads is not None, mlp_layers is not None]) == 1
+
+    # make sure all heads are in same layer
+    if heads is not None:
+        assert len(set([layer for (layer, head) in heads])) == 1
+        layer = heads[0][0]
+        head = heads[0][1]
+        #print(layer)
+    elif mlp_layers is not None:
+        # layer is max of all the layers
+        layer = max(mlp_layers)
+    else:
+        raise Exception("No heads or mlp layers given")
+    
+    ablated_per_head_batch_direct_effect, mlp_per_layer_direct_effect = dir_effects_from_sample_ablating(attention_heads=heads, mlp_layers=mlp_layers)
+
+    # 2) gets the total accumulated backup of the head for each prompt and position
+    downstream_change_in_logit_diff: Float[Tensor, "layer head batch pos"] = ablated_per_head_batch_direct_effect - per_head_direct_effect
+    downstream_change_in_mlp_logit_diff: Float[Tensor, "layer batch pos"] = mlp_per_layer_direct_effect - all_layer_direct_effect
+    
+
+    assert downstream_change_in_logit_diff[0:layer].sum((0,1,2,3)).item() == 0
+    if heads is not None:
+        head_backup = downstream_change_in_logit_diff[(layer+1):].sum((0,1))
+        mlp_backup = downstream_change_in_mlp_logit_diff[(layer):].sum(0)
+        total_backup = head_backup + mlp_backup
+    if mlp_layers is not None:
+        head_backup = downstream_change_in_logit_diff[(layer+1):].sum((0,1))
+        mlp_backup = downstream_change_in_mlp_logit_diff[(layer+1):].sum(0)
+        total_backup = head_backup + mlp_backup
+    
+
+    # 3) filter for indices wherer per_head_direct_effect is greater than threshold
+    to_return = {}
+    for threshold in thresholds:
+        mask_direct_effect: Float[Tensor, "batch pos"] = per_head_direct_effect[layer, head] > threshold
+        # Using masked_select to get the relevant values based on the mask.
+        selected_cre = total_backup.masked_select(mask_direct_effect)
+        selected_de = per_head_direct_effect[layer, head].masked_select(mask_direct_effect)
+        
+    
+        to_return[f"de_{threshold}"] = selected_de.mean().item()
+        to_return[f"cre_{threshold}"] = selected_cre.mean().item()
+        to_return[f"num_thresholded_{threshold}"] = selected_cre.shape[0]
+        
+    return to_return
+
+
+
+def plot_thresholded_de_vs_cre(thresholds = [1]):
+    thresholded_de = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
+    thresholded_cre = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
+    thresholded_count = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
+
+    for layer in tqdm(range(model.cfg.n_layers)):
+        for head in range(model.cfg.n_heads):
+            dict_results = get_threholded_de_cre(heads = [(layer, head)], thresholds = thresholds)
+            for i, threshold in enumerate(thresholds):
+                thresholded_de[i, layer, head] = dict_results[f"de_{threshold}"]
+                thresholded_cre[i, layer, head] = dict_results[f"cre_{threshold}"]
+                thresholded_count[i, layer, head] = dict_results[f"num_thresholded_{threshold}"]
+
+    # create another figure plotting the cre vs the direct effect of the head
+    # Flatten the tensors for plotting
+
+    layers_list = [l for l in range(model.cfg.n_layers) for _ in range(model.cfg.n_heads)]
+    for i, threshold in enumerate(thresholds):
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(
+            x=thresholded_de[i].flatten(),
+            y=thresholded_cre[i].flatten(),
+            mode='markers',
+            marker=dict(
+                size=10,
+                opacity=0.5,
+                line=dict(width=1),
+                color=layers_list,  # Setting color based on layer
+                colorscale='Viridis',  # Using Viridis colorscale, but you can choose any other available colorscale
+                colorbar=dict(title='Layer', y = 10),  # Adding a colorbar to denote layers
+            ),
+            text=[f"Layer {l}, Head {h}" for l in range(model.cfg.n_layers) for h in range(model.cfg.n_heads)]
+        ))
+
+        # Add y=x line
+        fig2.add_trace(go.Scatter(
+            x=torch.linspace(0,max(thresholded_de[i].masked_fill(torch.isnan(thresholded_de[i]), -float('inf')).flatten()),100),
+            y=torch.linspace(0,max(thresholded_de[i].masked_fill(torch.isnan(thresholded_de[i]), -float('inf')).flatten()),100),
+            mode='lines',
+            #name='y = x',
+            line = dict(dash = 'dash')
+        ))
+    
+        # Add titles and labels
+        fig2.update_layout(
+            title=f"Thresholded (>= {threshold})Compensatory Response Effect vs Average Direct Effect in {model_name}",
+            xaxis_title="Average Direct Effect",
+            yaxis_title="Average Compensatory Response Effect",
+            hovermode="closest",  # Hover over data points to see the text
+            width=1000,
+            height=400,
+            showlegend = False,
+        )
+        if in_notebook_mode:
+            fig2.show()
+        # Save the figure
+        fig2.write_image(f"threshold_figures/threshold_{safe_model_name}_{threshold}_cre_vs_avg_direct_effect.png")
+# %%
+
+plot_thresholded_de_vs_cre([0, 0.2, 0.3, 0.4, 0.5, 0.75, 1, 1.5, 2])
 # %%

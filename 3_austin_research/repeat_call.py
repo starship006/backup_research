@@ -3,12 +3,12 @@
 import subprocess
 
 model_names = [
+    "gpt2-medium",
     "EleutherAI/pythia-14m",
     "EleutherAI/pythia-31m",
     "EleutherAI/pythia-70m",
-    "NeelNanda/SoLU_8L_v21_old",
-    "NeelNanda/SoLU_10L_v22_old",
-    "NeelNanda/SoLU_12L_v23_old"
+    "roneneldan/TinyStories-33M",
+    #"NeelNanda/SoLU_12L1536W_C4_Code",
 ]
 
 for model_name in model_names:
