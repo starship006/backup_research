@@ -96,8 +96,6 @@ def get_projection(from_vector, to_vector):
     return projections
 
 def TestGetProjection():
-
-    
     v1 = torch.tensor([1., 0., 0.]) 
     v2 = torch.tensor([0., 1., 0.])
     proj = get_projection(v1, v2)

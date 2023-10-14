@@ -2,6 +2,7 @@
 from imports import *
 import argparse
 
+
 # %%
 in_notebook_mode = True
 if in_notebook_mode:
@@ -231,13 +232,24 @@ per_head_direct_effect, all_layer_direct_effect, per_neuron_direct_effect  = col
 
 
 # %%
-# show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)))
-show_input(per_head_direct_effect.mean((-1,-2)),torch.zeros((model.cfg.n_layers)))
+show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)))
+#show_input(per_head_direct_effect.mean((-1,-2)),torch.zeros((model.cfg.n_layers)))
 
 # %%
-histogram(per_head_direct_effect[7,8].flatten(), title = "direct effects of L7H8")
+histogram(per_head_direct_effect[9,5].flatten(), title = "direct effects of L9H5") # this is a copy suppression head in the model maybe?
+# %%
+histogram(all_layer_direct_effect[-1].flatten())
+
 # %%
 def show_batch_result(batch, start = 40, end = 47, per_head_direct_effect = per_head_direct_effect, all_layer_direct_effect = all_layer_direct_effect):
+    """
+    highlights the text selection, along with the mean effect of the range
+    indexed similariy to python, where start is inclusive and end is exclusive 
+
+    recall that the per_head_direct_effect is one length shorter than the input, since it doesn't have the first token
+    so, if the interesting self-repair you are observing seems to be at pos 12, this means it is for the prediction of token 13
+    """
+    
     print(model.to_string(all_owt_tokens[batch, 0:start]))
     print("...")
     print(model.to_string(all_owt_tokens[batch, start:end]))
@@ -301,7 +313,8 @@ def create_scatter_of_backup_of_component(heads = None, mlp_layers = None, retur
     assert direct_effects.shape == total_backup.flatten().cpu().shape
     if not return_slope:
         fig = go.Figure()
-        text_labels = [f"Batch {i[0]}, Pos {i[1]}" for i in itertools.product(range(BATCH_SIZE), range(PROMPT_LEN - 1))]
+        
+        text_labels = [f"Batch {i[0]}, Pos {i[1]}: {model.to_string(all_owt_tokens[i[0], i[1]:(i[1] + 1)])} --> {model.to_string(all_owt_tokens[i[0], (i[1] + 1):(i[1] + 2)])}" for i in itertools.product(range(BATCH_SIZE), range(PROMPT_LEN - 1))]
 
         scatter_plot = go.Scatter(
             x = direct_effects,
@@ -369,6 +382,15 @@ if in_notebook_mode:
     create_scatter_of_backup_of_component(heads = [(1,8)]) # the head in gpt2-small which has insane downstream impact
     ablated_de, ablated_layer_de = dir_effects_from_sample_ablating(attention_heads=[(1,8)])
     #show_batch_result(27, start = 17, end = 24, per_head_direct_effect = (ablated_de - per_head_direct_effect), all_layer_direct_effect = (ablated_layer_de - all_layer_direct_effect))
+    #utils.test_prompt("""Hannity: GOP's Failure 'Pushed Trump Into Arms of Chuck & Nancy' \n""", "\n", model)
+
+
+
+
+
+
+
+
 # %%
 
 slopes_of_head_backup = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
@@ -442,16 +464,16 @@ if in_notebook_mode:
 # %%
 
 if in_notebook_mode:
-    layer = 5
-    head = 11
+    layer = 1
+    head = 8
     temp_head_effect, temp_mlp_effect = dir_effects_from_sample_ablating(attention_heads = [(layer, head)])
     show_input(temp_head_effect.mean((-1,-2)) - per_head_direct_effect.mean((-1,-2)), temp_mlp_effect.mean((-1,-2)) - all_layer_direct_effect.mean((-1,-2)),
             title = f"Logit Diff Diff of Downstream Components upon ablation of {layer}.{head}")
 
-    layer = 10
-    temp_head_effect, temp_mlp_effect = dir_effects_from_sample_ablating(mlp_layers = [10])
-    show_input(temp_head_effect.mean((-1,-2)) - per_head_direct_effect.mean((-1,-2)), temp_mlp_effect.mean((-1,-2)) - all_layer_direct_effect.mean((-1,-2)),
-            title = f"Logit Diff Diff of Downstream Components upon ablation of layer {layer}")
+    # layer = 10
+    # temp_head_effect, temp_mlp_effect = dir_effects_from_sample_ablating(mlp_layers = [10])
+    # show_input(temp_head_effect.mean((-1,-2)) - per_head_direct_effect.mean((-1,-2)), temp_mlp_effect.mean((-1,-2)) - all_layer_direct_effect.mean((-1,-2)),
+    #         title = f"Logit Diff Diff of Downstream Components upon ablation of layer {layer}")
     
     #hist(all_layer_direct_effect[-1].flatten().cpu())
 
@@ -788,5 +810,17 @@ def plot_thresholded_de_vs_cre(thresholds = [1]):
     fig.write_html(f"threshold_figures/threshold_{safe_model_name}_cre_vs_avg_direct_effect_slider.html")
 # %%
 #plot_thresholded_de_vs_cre([-99999999999999999])
-plot_thresholded_de_vs_cre([0.15 * i for i in range(0,10)])
+plot_thresholded_de_vs_cre([0.1 * i for i in range(0,12)])
+# %%
+
+
+# RED TEAM EARLIER ESULT
+
+new_logits = act_patch(model, owt_tokens,  [Node("z", 1, 8)], new_input = corrupted_owt_tokens, patching_metric = return_item,)
+# %%
+print(new_logits[53, 12, 187])
+print(new_logits[53, 12].argmax())
+# %%
+print(logits[53, 12, 187])
+print(logits[53, 12].argmax())
 # %%
