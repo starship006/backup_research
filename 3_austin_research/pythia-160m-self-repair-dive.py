@@ -57,7 +57,7 @@ def residual_stack_to_direct_effect(
     residual_stack: Float[Tensor, "... batch pos d_model"],
     effect_directions: Float[Tensor, "batch pos d_model"],
     apply_last_ln = True,
-    clean_cache = cache
+    scaling_cache = cache
 ) -> Float[Tensor, "... batch pos_mins_one"]:
     '''
     Gets the direct effect towards a direction for a given stack of components in the residual stream.
@@ -65,10 +65,10 @@ def residual_stack_to_direct_effect(
 
     residual_stack: [... batch pos d_model] components of d_model vectors to measure direct effect from
     effect_directions: [batch pos d_model] vectors in d_model space that correspond to 'direct effect'
-    clean_cache = a cache from the clean run to use for the LN
+    scaling_cache = the cache to use for the scaling; defaults to the global clean cache
     '''
-    batch_size = residual_stack.size(-3)
-    scaled_residual_stack = clean_cache.apply_ln_to_stack(residual_stack, layer=-1, has_batch_dim=True) if apply_last_ln else residual_stack
+    
+    scaled_residual_stack = scaling_cache.apply_ln_to_stack(residual_stack, layer=-1, has_batch_dim=True) if apply_last_ln else residual_stack
     
     # remove the last prediction, and the direction of the zeroth token
     scaled_residual_stack = scaled_residual_stack[..., :, :-1, :]
@@ -145,7 +145,7 @@ def collect_direct_effect(cache: ActivationCache, correct_tokens: Float[Tensor, 
     clean_per_head_residual: Float[Tensor, "head batch seq d_model"] = cache.stack_head_results(layer = -1, return_labels = False, apply_ln = False)
     
     #print(clean_per_head_residual.shape)
-    per_head_direct_effect: Float[Tensor, "heads batch pos_minus_one"] = residual_stack_to_direct_effect(clean_per_head_residual, token_residual_directions, True)
+    per_head_direct_effect: Float[Tensor, "heads batch pos_minus_one"] = residual_stack_to_direct_effect(clean_per_head_residual, token_residual_directions, True, scaling_cache = cache)
     
     
     per_head_direct_effect = einops.rearrange(per_head_direct_effect, "(n_layer n_head) batch pos -> n_layer n_head batch pos", n_layer = model.cfg.n_layers, n_head = model.cfg.n_heads)
@@ -158,13 +158,13 @@ def collect_direct_effect(cache: ActivationCache, correct_tokens: Float[Tensor, 
     if collect_individual_neurons:
         for neuron in tqdm(range(model.cfg.d_mlp)):
             single_neuron_output: Float[Tensor, "n_layer batch pos d_model"] = cache.stack_neuron_results(layer = -1, neuron_slice = (neuron, neuron + 1), return_labels = False, apply_ln = False)
-            direct_effect_mlp[:, neuron, :, :] = residual_stack_to_direct_effect(single_neuron_output, token_residual_directions).cpu()
+            direct_effect_mlp[:, neuron, :, :] = residual_stack_to_direct_effect(single_neuron_output, token_residual_directions, scaling_cache = cache).cpu()
     # get per mlp layer effect
     all_layer_output: Float[Tensor, "n_layer batch pos d_model"] = torch.zeros((model.cfg.n_layers, owt_tokens.shape[0], owt_tokens.shape[1], model.cfg.d_model)).cuda()
     for layer in range(model.cfg.n_layers):
         all_layer_output[layer, ...] = cache[f'blocks.{layer}.hook_mlp_out']
 
-    all_layer_direct_effect: Float["n_layer batch pos_minus_one"] = residual_stack_to_direct_effect(all_layer_output, token_residual_directions).cpu()
+    all_layer_direct_effect: Float["n_layer batch pos_minus_one"] = residual_stack_to_direct_effect(all_layer_output, token_residual_directions, scaling_cache = cache).cpu()
 
 
     if display:    
@@ -294,7 +294,8 @@ def create_scatter_of_backup_of_component(heads = None, mlp_layers = None, retur
     #print(downstream_change_in_logit_diff.shape)
     #print(downstream_change_in_mlp_logit_diff.shape)
     
-    assert downstream_change_in_logit_diff[0:layer].sum((0,1,2,3)).item() == 0
+    if(downstream_change_in_logit_diff[0:layer].sum((0,1,2,3)).item() != 0):
+        print("expect assymetry since different LNs used")
     if heads is not None:
         head_backup = downstream_change_in_logit_diff[(layer+1):].sum((0,1))
         mlp_backup = downstream_change_in_mlp_logit_diff[(layer):].sum(0)
@@ -381,13 +382,8 @@ if in_notebook_mode:
     #create_scatter_of_backup_of_component(heads = [(10,7)])
     create_scatter_of_backup_of_component(heads = [(1,8)]) # the head in gpt2-small which has insane downstream impact
     ablated_de, ablated_layer_de = dir_effects_from_sample_ablating(attention_heads=[(1,8)])
-    #show_batch_result(27, start = 17, end = 24, per_head_direct_effect = (ablated_de - per_head_direct_effect), all_layer_direct_effect = (ablated_layer_de - all_layer_direct_effect))
+    show_batch_result(89, start = 26, end = 27, per_head_direct_effect = (ablated_de - per_head_direct_effect), all_layer_direct_effect = (ablated_layer_de - all_layer_direct_effect))
     #utils.test_prompt("""Hannity: GOP's Failure 'Pushed Trump Into Arms of Chuck & Nancy' \n""", "\n", model)
-
-
-
-
-
 
 
 
@@ -546,7 +542,7 @@ def create_scatter_of_change_from_component(heads = None, mlp_layers = None, ret
     # get the final direct effects under ablation
     final_resid_stream: Float[Tensor, "batch pos d_model"] = ablated_cache[f'blocks.{model.cfg.n_layers - 1}.hook_resid_post']
     token_residual_directions: Float[Tensor, "batch seq_len d_model"] = model.tokens_to_residual_directions(owt_tokens)
-    final_direct_effect: Float[Tensor, "batch pos_minus_one"] = residual_stack_to_direct_effect(final_resid_stream, token_residual_directions, True)
+    final_direct_effect: Float[Tensor, "batch pos_minus_one"] = residual_stack_to_direct_effect(final_resid_stream, token_residual_directions, True, scaling_cache = ablated_cache)
 
     # get change in direct effect compared to original
     change_in_direct_effect = (final_direct_effect - last_layer_direct_effect) # if you wanna compare to just CRE - (ablated_per_head_direct_effect[layer, head] - per_head_direct_effect[layer, head])
@@ -641,7 +637,8 @@ def get_threholded_de_cre(heads = None, mlp_layers = None, thresholds = [0.5]):
     downstream_change_in_mlp_logit_diff: Float[Tensor, "layer batch pos"] = mlp_per_layer_direct_effect - all_layer_direct_effect
     
 
-    assert downstream_change_in_logit_diff[0:layer].sum((0,1,2,3)).item() == 0
+    if (downstream_change_in_logit_diff[0:layer].sum((0,1,2,3)).item() != 0):
+        print("assymetry in direct effects due to changed LN scaling alert!")
     if heads is not None:
         head_backup = downstream_change_in_logit_diff[(layer+1):].sum((0,1))
         mlp_backup = downstream_change_in_mlp_logit_diff[(layer):].sum(0)
@@ -817,10 +814,47 @@ plot_thresholded_de_vs_cre([0.1 * i for i in range(0,12)])
 # RED TEAM EARLIER ESULT
 
 new_logits = act_patch(model, owt_tokens,  [Node("z", 1, 8)], new_input = corrupted_owt_tokens, patching_metric = return_item,)
+new_probs = torch.softmax(new_logits, -1)
+old_probs = torch.softmax(logits, -1)
 # %%
-print(new_logits[53, 12, 187])
-print(new_logits[53, 12].argmax())
+values_new, indices_new = torch.topk(new_probs[53, 12, :], 5)
+print("Top 5 values of new_logits[53, 12, :]:", values_new)
+print("Top 5 indices of new_logits[53, 12, :]:", indices_new)
+
+
+# For logits
+values, indices = torch.topk(old_probs[53, 12, :], 5)
+print("Top 5 values of logits[53, 12, :]:", values)
+print("Top 5 indices of logits[53, 12, :]:", indices)
+
 # %%
-print(logits[53, 12, 187])
-print(logits[53, 12].argmax())
+ablated_1_8_cache = act_patch(model, owt_tokens,  [Node("z", 1, 8)],
+                            return_item, corrupted_owt_tokens, apply_metric_to_cache= True)
+
+
+# %%
+for layer in range(model.cfg.n_layers):
+    print(ablated_1_8_cache[utils.get_act_name("resid_pre", layer)].shape)
+# %%
+
+head_de, mlp_layer_de = collect_direct_effect(ablated_1_8_cache, owt_tokens, display = True, collect_individual_neurons = False)
+# %%
+show_input(head_de[..., 53,12], mlp_layer_de[..., 53,12], title = "Direct Effect of Ablating Head 1.8")
+
+# %%
+show_input(per_head_direct_effect[..., 53,12], all_layer_direct_effect[..., 53,12], title = "Direct Effect of Ablating Head 1.8")
+# %%
+
+token_residual_directions: Float[Tensor, "batch seq_len d_model"] = model.tokens_to_residual_directions(owt_tokens)
+all_layer_output: Float[Tensor, "n_layer batch pos d_model"] = torch.zeros((model.cfg.n_layers, owt_tokens.shape[0], owt_tokens.shape[1], model.cfg.d_model)).cuda()
+for layer in range(model.cfg.n_layers):
+    all_layer_output[layer, ...] = ablated_1_8_cache[f'blocks.{layer}.hook_mlp_out']
+
+
+scaled_residual_stack = ablated_1_8_cache.apply_ln_to_stack(all_layer_output, layer = -1, has_batch_dim = True)
+scaled_residual_stack = scaled_residual_stack[..., :, :-1, :]
+effect_directions = token_residual_directions[:, 1:, :]
+dot_prods = einops.einsum(scaled_residual_stack, effect_directions, "... batch pos d_model, batch pos d_model -> ... batch pos")
+
+dot_prods[-1, 53, 12]
 # %%
