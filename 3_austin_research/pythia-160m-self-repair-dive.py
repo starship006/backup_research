@@ -25,7 +25,7 @@ model = HookedTransformer.from_pretrained(
 model.set_use_attn_result(True)
 # %%
 owt_dataset = utils.get_dataset("owt")
-BATCH_SIZE = 100
+BATCH_SIZE = 150
 PROMPT_LEN = 50
 
 
@@ -384,20 +384,131 @@ if in_notebook_mode:
     ablated_de, ablated_layer_de = dir_effects_from_sample_ablating(attention_heads=[(1,8)])
     show_batch_result(89, start = 26, end = 27, per_head_direct_effect = (ablated_de - per_head_direct_effect), all_layer_direct_effect = (ablated_layer_de - all_layer_direct_effect))
     #utils.test_prompt("""Hannity: GOP's Failure 'Pushed Trump Into Arms of Chuck & Nancy' \n""", "\n", model)
+# %%
+def get_correct_logit_score(
+    logits: Float[Tensor, "batch seq d_vocab"],
+    correct: Float[Tensor, "batch 1"] = owt_tokens,
+):
+    '''
+    Returns logit difference between the correct and incorrect answer.
+
+    If per_prompt=True, return the array of differences rather than the average.
+    '''
+    smaller_logits = logits[:, :-1, :]
+    smaller_correct = correct[:, 1:].unsqueeze(-1)
 
 
+    answer_logits: Float[Tensor, "batch 2"] = smaller_logits.gather(dim=-1, index=smaller_correct)
+    return answer_logits
+
+# %%
+
+def create_scatter_of_change_from_component(heads = None, mlp_layers = None, return_slope = False):
+    """"
+    this function:
+    1) gets the direct effect of all a component when sample ablating it
+    2) gets the CHANGE IN LOGIT CONTRIBUTION for each prompt and position
+    3) plots the clean direct effect vs accumulated backup
+
+    heads: list of tuples of (layer, head) to ablate
+        - all heads need to be in same layer for now
+    """
+
+    # don't accept if more than one input is none
+    assert sum([heads is not None, mlp_layers is not None]) == 1
+
+    # make sure all heads are in same layer
+    if heads is not None:
+        assert len(set([layer for (layer, head) in heads])) == 1
+        layer = heads[0][0]
+        head = heads[0][1]
+        #print(layer)
+    elif mlp_layers is not None:
+        # layer is max of all the layers
+        layer = max(mlp_layers)
+    else:
+        raise Exception("No heads or mlp layers given")
+    
+    
+    nodes = []
+    if heads != None :
+        nodes += [Node("z", layer, head) for (layer,head) in heads]
+    if mlp_layers != None:
+        nodes += [Node("mlp_out", layer) for layer in mlp_layers]
+        
+    new_logits = act_patch(model, owt_tokens, nodes, return_item, corrupted_owt_tokens, apply_metric_to_cache= False)
+    
+
+    diff_in_logits = new_logits - logits
+
+    # get change in direct effect compared to original
+    change_in_direct_effect = get_correct_logit_score(diff_in_logits)
+    
+    #  3) plots the clean direct effect vs accumulated backup
+    direct_effects = per_head_direct_effect[layer, head].flatten().cpu() if heads is not None else all_layer_direct_effect[layer].flatten().cpu()
+    assert direct_effects.shape == change_in_direct_effect.flatten().cpu().shape
+
+    # get a best fit line
+    slope, intercept = np.linalg.lstsq(np.vstack([direct_effects, np.ones(len(direct_effects))]).T, change_in_direct_effect.flatten().cpu(), rcond=None)[0]
+
+    if not return_slope:
+        fig = go.Figure()
+        text_labels = [f"Batch {i[0]}, Pos {i[1]}: {model.to_string(all_owt_tokens[i[0], i[1]:(i[1] + 1)])} --> {model.to_string(all_owt_tokens[i[0], (i[1] + 1):(i[1] + 2)])}" for i in itertools.product(range(BATCH_SIZE), range(PROMPT_LEN - 1))]
+
+
+        scatter_plot = go.Scatter(
+            x = direct_effects,
+            y = change_in_direct_effect.flatten().cpu(),
+            text=text_labels,  # Set the hover labels to the text attribute
+            mode='markers',
+            marker=dict(size=2, opacity=0.8),
+            name = "Change in Final Logits vs Direct Effect"
+        )
+        fig.add_trace(scatter_plot)
+        max_x = max(direct_effects.abs())
+
+        # add line of best fit
+        fig.add_trace(go.Scatter(
+            x=torch.linspace(-1 * max_x,max_x,100),
+            y=torch.linspace(-1 * max_x,max_x,100) * slope + intercept,
+            mode='lines',
+            name='lines'
+        ))
+
+        # add dashed y=-x line
+        fig.add_trace(go.Scatter(
+            x=torch.linspace(-1 * max_x,max_x,100),
+            y=torch.linspace(-1 * max_x,max_x,100) * -1,
+            mode='lines',
+            name='y = -x',
+            line = dict(dash = 'dash')
+        ))
+
+        component = heads if heads is not None else mlp_layers
+        fig.update_layout(
+            title=f"Change in Final Logits vs Direct Effect for {component} in {model_name} for each Position and Batch" if heads is not None 
+            else f"Change in Final Logits vs Direct Effect for MLP Layer {component} in {model_name} for each Position and Batch",
+        )
+        fig.update_xaxes(title = f"Direct Effect of Head {heads[0]}" if heads is not None else f"Direct Effect of MLP Layer {mlp_layers[0]}")
+        fig.update_yaxes(title = "Change in Final Logits")
+        fig.update_layout(width=900, height=500)
+        fig.show()
+    
+    if return_slope:
+        return slope
+# %%
+create_scatter_of_change_from_component(heads = [(1,8)])
 
 # %%
 
 slopes_of_head_backup = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
-cre_of_heads = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
 for layer in tqdm(range(model.cfg.n_layers)):
     for head in range(model.cfg.n_heads):
-        slopes_of_head_backup[layer, head] = create_scatter_of_backup_of_component(heads = [(layer, head)], return_slope = True)
-        cre_of_heads[layer, head] = create_scatter_of_backup_of_component(heads = [(layer, head)], return_CRE = True).mean((-2,-1))
+        slopes_of_head_backup[layer, head] = create_scatter_of_change_from_component(heads = [(layer, head)], return_slope = True)
+        
 
 
-fig = imshow(slopes_of_head_backup, title = f"Slopes of Head Backup in {model_name}",
+fig = imshow(slopes_of_head_backup, title = f"Slopes of Component Influence on Total Change in Final Logits in {model_name}",
        text_auto = True, width = 800, height = 800, return_fig=True) # show a number above each square)
 if in_notebook_mode: 
     fig.show()
@@ -510,97 +621,6 @@ if in_notebook_mode:
 
 # %%
 
-def create_scatter_of_change_from_component(heads = None, mlp_layers = None, return_slope = False):
-    """"
-    this function:
-    1) gets the direct effect of all a component when sample ablating it
-    2) gets the CHANGE IN LOGIT CONTRIBUTION for each prompt and position
-    3) plots the clean direct effect vs accumulated backup
-
-    heads: list of tuples of (layer, head) to ablate
-        - all heads need to be in same layer for now
-    """
-
-    # don't accept if more than one input is none
-    assert sum([heads is not None, mlp_layers is not None]) == 1
-
-    # make sure all heads are in same layer
-    if heads is not None:
-        assert len(set([layer for (layer, head) in heads])) == 1
-        layer = heads[0][0]
-        head = heads[0][1]
-        #print(layer)
-    elif mlp_layers is not None:
-        # layer is max of all the layers
-        layer = max(mlp_layers)
-    else:
-        raise Exception("No heads or mlp layers given")
-    
-    ablated_per_head_direct_effect, ablated_all_layer_direct_effect, ablated_cache = dir_effects_from_sample_ablating(attention_heads=heads, mlp_layers=mlp_layers, return_cache = True)
-
-
-    # get the final direct effects under ablation
-    final_resid_stream: Float[Tensor, "batch pos d_model"] = ablated_cache[f'blocks.{model.cfg.n_layers - 1}.hook_resid_post']
-    token_residual_directions: Float[Tensor, "batch seq_len d_model"] = model.tokens_to_residual_directions(owt_tokens)
-    final_direct_effect: Float[Tensor, "batch pos_minus_one"] = residual_stack_to_direct_effect(final_resid_stream, token_residual_directions, True, scaling_cache = ablated_cache)
-
-    # get change in direct effect compared to original
-    change_in_direct_effect = (final_direct_effect - last_layer_direct_effect) # if you wanna compare to just CRE - (ablated_per_head_direct_effect[layer, head] - per_head_direct_effect[layer, head])
-    
-    #  3) plots the clean direct effect vs accumulated backup
-    direct_effects = per_head_direct_effect[layer, head].flatten().cpu() if heads is not None else all_layer_direct_effect[layer].flatten().cpu()
-    assert direct_effects.shape == change_in_direct_effect.flatten().cpu().shape
-
-    # get a best fit line
-    slope, intercept = np.linalg.lstsq(np.vstack([direct_effects, np.ones(len(direct_effects))]).T, change_in_direct_effect.flatten().cpu(), rcond=None)[0]
-
-    if not return_slope:
-        fig = go.Figure()
-        text_labels = [f"Batch {i[0]}, Pos {i[1]}" for i in itertools.product(range(BATCH_SIZE), range(PROMPT_LEN - 1))]
-
-
-        scatter_plot = go.Scatter(
-            x = direct_effects,
-            y = change_in_direct_effect.flatten().cpu(),
-            text=text_labels,  # Set the hover labels to the text attribute
-            mode='markers',
-            marker=dict(size=2, opacity=0.8),
-            name = "Change in Final Logits vs Direct Effect"
-        )
-        fig.add_trace(scatter_plot)
-        max_x = max(direct_effects.abs())
-
-        # add line of best fit
-        fig.add_trace(go.Scatter(
-            x=torch.linspace(-1 * max_x,max_x,100),
-            y=torch.linspace(-1 * max_x,max_x,100) * slope + intercept,
-            mode='lines',
-            name='lines'
-        ))
-
-        # add dashed y=-x line
-        fig.add_trace(go.Scatter(
-            x=torch.linspace(-1 * max_x,max_x,100),
-            y=torch.linspace(-1 * max_x,max_x,100) * -1,
-            mode='lines',
-            name='y = -x',
-            line = dict(dash = 'dash')
-        ))
-
-        component = heads if heads is not None else mlp_layers
-        fig.update_layout(
-            title=f"Change in Final Logits vs Direct Effect for {component} in {model_name} for each Position and Batch" if heads is not None 
-            else f"Change in Final Logits vs Direct Effect for MLP Layer {component} in {model_name} for each Position and Batch",
-        )
-        fig.update_xaxes(title = f"Direct Effect of Head {heads[0]}" if heads is not None else f"Direct Effect of MLP Layer {mlp_layers[0]}")
-        fig.update_yaxes(title = "Change in Final Logits")
-        fig.update_layout(width=900, height=500)
-        fig.show()
-    
-    if return_slope:
-        return slope
-# %%
-#create_scatter_of_change_from_component(heads = [(9,6)])
 # %%
 
 
