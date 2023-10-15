@@ -382,7 +382,8 @@ if in_notebook_mode:
     #create_scatter_of_backup_of_component(heads = [(10,7)])
     create_scatter_of_backup_of_component(heads = [(1,8)]) # the head in gpt2-small which has insane downstream impact
     ablated_de, ablated_layer_de = dir_effects_from_sample_ablating(attention_heads=[(1,8)])
-    show_batch_result(89, start = 26, end = 27, per_head_direct_effect = (ablated_de - per_head_direct_effect), all_layer_direct_effect = (ablated_layer_de - all_layer_direct_effect))
+    #show_batch_result(23, start = 12, end = 13, per_head_direct_effect = (ablated_de - per_head_direct_effect), all_layer_direct_effect = (ablated_layer_de - all_layer_direct_effect))
+    show_batch_result(23, start = 12, end = 13, per_head_direct_effect = (per_head_direct_effect), all_layer_direct_effect = (all_layer_direct_effect))
     #utils.test_prompt("""Hannity: GOP's Failure 'Pushed Trump Into Arms of Chuck & Nancy' \n""", "\n", model)
 # %%
 def get_correct_logit_score(
@@ -435,7 +436,7 @@ def create_scatter_of_change_from_component(heads = None, mlp_layers = None, ret
         nodes += [Node("z", layer, head) for (layer,head) in heads]
     if mlp_layers != None:
         nodes += [Node("mlp_out", layer) for layer in mlp_layers]
-        
+
     new_logits = act_patch(model, owt_tokens, nodes, return_item, corrupted_owt_tokens, apply_metric_to_cache= False)
     
 
@@ -558,15 +559,16 @@ if in_notebook_mode:
 
 # %%
 # Do the same thing but for MLP layers
-# slopes_of_mlp_backup = torch.zeros((model.cfg.n_layers))
-# for layer in tqdm(range(model.cfg.n_layers)):
-#     slopes_of_mlp_backup[layer] = create_scatter_of_backup_of_component(mlp_layers = [layer], return_slope = True)
+slopes_of_mlp_backup = torch.zeros((model.cfg.n_layers))
+for layer in tqdm(range(model.cfg.n_layers)):
+    slopes_of_mlp_backup[layer] = create_scatter_of_change_from_component(mlp_layers = [layer], return_slope = True)
 
-# if in_notebook_mode: 
-#     fig.show()
 # %%
-# fig = imshow(einops.repeat(slopes_of_mlp_backup, "a -> a 1"), title = f"Slopes of MLP Backup in {model_name}",
-#        text_auto = True, width = 800, height = 800, return_fig=True)# show a number above each square)
+fig = imshow(einops.repeat(slopes_of_mlp_backup, "a -> a 1"), title = f"Slopes of MLP Backup in {model_name}",
+       text_auto = True, width = 800, height = 800, return_fig=True)# show a number above each square)
+
+if in_notebook_mode: 
+    fig.show()
 # fig.write_image(f"slopes_of_mlp_backup_{safe_model_name}.png")
 # %%
 
