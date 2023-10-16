@@ -1,7 +1,7 @@
 # %%
 from imports import *
 import argparse
-
+from helpers import return_partial_functions, return_item, topk_of_Nd_tensor, residual_stack_to_direct_effect, show_input, collect_direct_effect, dir_effects_from_sample_ablating, get_correct_logit_score
 
 # %%
 in_notebook_mode = True
@@ -37,208 +37,26 @@ assert owt_tokens.shape == corrupted_owt_tokens.shape == (BATCH_SIZE, PROMPT_LEN
 # %%
 logits, cache = model.run_with_cache(owt_tokens)
 
-
 print(utils.lm_accuracy(logits, owt_tokens))
 print(utils.lm_cross_entropy_loss(logits, owt_tokens))
-# %%
-def topk_of_Nd_tensor(tensor: Float[Tensor, "rows cols"], k: int):
-    '''
-    Helper function: does same as tensor.topk(k).indices, but works over 2D tensors.
-    Returns a list of indices, i.e. shape [k, tensor.ndim].
+# %% Import the helper functions from the helpers.py file and pass in shared arguments
 
-    Example: if tensor is 2D array of values for each head in each layer, this will
-    return a list of heads.
-    '''
-    i = torch.topk(tensor.flatten(), k).indices
-    return np.array(np.unravel_index(utils.to_numpy(i), tensor.shape)).T.tolist()
+partials = return_partial_functions(model = model, clean_tokens = owt_tokens, corrupted_tokens = corrupted_owt_tokens, cache = cache)
+globals().update(partials)
 
-
-def residual_stack_to_direct_effect(
-    residual_stack: Float[Tensor, "... batch pos d_model"],
-    effect_directions: Float[Tensor, "batch pos d_model"],
-    apply_last_ln = True,
-    scaling_cache = cache
-) -> Float[Tensor, "... batch pos_mins_one"]:
-    '''
-    Gets the direct effect towards a direction for a given stack of components in the residual stream.
-    NOTE: IGNORES THE VERY LAST PREDICTION AND FIRST CLEAN TOKEN; WE DON'T KNOW THE ACTUAL PREDICTED ANSWER FOR IT!
-
-    residual_stack: [... batch pos d_model] components of d_model vectors to measure direct effect from
-    effect_directions: [batch pos d_model] vectors in d_model space that correspond to 'direct effect'
-    scaling_cache = the cache to use for the scaling; defaults to the global clean cache
-    '''
-    
-    scaled_residual_stack = scaling_cache.apply_ln_to_stack(residual_stack, layer=-1, has_batch_dim=True) if apply_last_ln else residual_stack
-    
-    # remove the last prediction, and the direction of the zeroth token
-    scaled_residual_stack = scaled_residual_stack[..., :, :-1, :]
-    effect_directions = effect_directions[:, 1:, :]
-
-    return einops.einsum(scaled_residual_stack, effect_directions, "... batch pos d_model, batch pos d_model -> ... batch pos")
-
-
-# test to ensure functions work: compare the predicted direct effect from the residual stack function to the actual direct effect
-last_layer_direct_effect: Float[Tensor, "batch pos_minus_one"] = residual_stack_to_direct_effect(
-    cache[f"blocks.{model.cfg.n_layers - 1}.hook_resid_post"],
-    model.tokens_to_residual_directions(owt_tokens),
-    )
-
-# first_batch_with_bias = [predicted_last_layer_direct_effect[0, i] + model.b_U[owt_tokens[0, i + 1].item()] for i in range(49)]
-# # compare the predicted 'direct effect' to the logits on the correct token. these should be the same
-# key_logits = [logits[0, index, token].item() for index, token in enumerate(owt_tokens[0, 1:])]
-
-# # compare the predicted 'direct effect' to the logits on the correct token. these should be the same
-# for i in range(10):
-#     print(first_batch_with_bias[i], key_logits[i])
-
-def show_input(input_head_values: Float[Tensor, "n_layer n_head"], input_MLP_layer_values: Float[Tensor, "n_layer"],
-               title = "Values"):
-    """
-    creates a heatmap figure with the head values displayed on the left, with the last column on the right displaying MLP values
-    """
-
-    input_head_values_np = input_head_values.cpu().numpy()
-    input_MLP_layer_values_np = input_MLP_layer_values.cpu().numpy()
-    
-    # Combine the head values and MLP values for the heatmap
-    combined_data = np.hstack([input_head_values_np, input_MLP_layer_values_np[:, np.newaxis]])
-    
-    fig = go.Figure(data=go.Heatmap(z=combined_data, colorscale='RdBu', zmid=0))
-
-    fig.add_shape(
-        go.layout.Shape(
-            type="rect",
-            xref="x",
-            yref="y",
-            x0=combined_data.shape[1] - 1.5,
-            x1=combined_data.shape[1] - 0.5,
-            y0=-0.5,
-            y1=combined_data.shape[0] - 0.5,
-            line=dict(color="Black", width=2)
-        )
-    )
-
-    fig.update_layout(title=title, xaxis_title="Head", yaxis_title="Layer", yaxis_autorange='reversed')
-    fig.show()
-    
-
-    # max_value = max(np.abs(input_head_values.cpu()).max(), np.abs(input_MLP_layer_values.cpu()).max()).item()
-    # fig.update_layout(coloraxis=dict(colorscale="RdBu", cmin=-max_value, cmax=max_value))
-    
-
-def collect_direct_effect(cache: ActivationCache, correct_tokens: Float[Tensor, "batch seq_len"],
-                           title = "Direct Effect of Heads", display = True, collect_individual_neurons = False) -> Tuple[Float[Tensor, "n_layer n_head batch pos_minus_one"], Float[Tensor, "n_layer batch pos_minus_one"], Float[Tensor, "n_layer d_mlp batch pos_minus_one"]]:
-    """
-    Given a cache of activations, and a set of correct tokens, returns the direct effect of each head and neuron on each token.
-    
-    returns tuple of tensors of per-head, per-mlp-layer, per-neuron of direct effects
-
-    cache: cache of activations from the model
-    correct_tokens: [batch, seq_len] tensor of correct tokens
-    title: title of the plot (relavant if display == True)
-    display: whether to display the plot or return the data; if False, returns [head, pos] tensor of direct effects
-    """
-
-    token_residual_directions: Float[Tensor, "batch seq_len d_model"] = model.tokens_to_residual_directions(correct_tokens)
-    
-    # get the direct effect of heads by positions
-    clean_per_head_residual: Float[Tensor, "head batch seq d_model"] = cache.stack_head_results(layer = -1, return_labels = False, apply_ln = False)
-    
-    #print(clean_per_head_residual.shape)
-    per_head_direct_effect: Float[Tensor, "heads batch pos_minus_one"] = residual_stack_to_direct_effect(clean_per_head_residual, token_residual_directions, True, scaling_cache = cache)
-    
-    
-    per_head_direct_effect = einops.rearrange(per_head_direct_effect, "(n_layer n_head) batch pos -> n_layer n_head batch pos", n_layer = model.cfg.n_layers, n_head = model.cfg.n_heads)
-    #assert per_head_direct_effect.shape == (model.cfg.n_heads * model.cfg.n_layers, owt_tokens.shape[0], owt_tokens.shape[1])
-
-    # get the outputs of the neurons
-    direct_effect_mlp: Float[Tensor, "n_layer d_mlp batch pos_minus_one"] = torch.zeros((model.cfg.n_layers, model.cfg.d_mlp, owt_tokens.shape[0], owt_tokens.shape[1] - 1))
-    
-    # iterate over every neuron to avoid memory issues
-    if collect_individual_neurons:
-        for neuron in tqdm(range(model.cfg.d_mlp)):
-            single_neuron_output: Float[Tensor, "n_layer batch pos d_model"] = cache.stack_neuron_results(layer = -1, neuron_slice = (neuron, neuron + 1), return_labels = False, apply_ln = False)
-            direct_effect_mlp[:, neuron, :, :] = residual_stack_to_direct_effect(single_neuron_output, token_residual_directions, scaling_cache = cache).cpu()
-    # get per mlp layer effect
-    all_layer_output: Float[Tensor, "n_layer batch pos d_model"] = torch.zeros((model.cfg.n_layers, owt_tokens.shape[0], owt_tokens.shape[1], model.cfg.d_model)).cuda()
-    for layer in range(model.cfg.n_layers):
-        all_layer_output[layer, ...] = cache[f'blocks.{layer}.hook_mlp_out']
-
-    all_layer_direct_effect: Float["n_layer batch pos_minus_one"] = residual_stack_to_direct_effect(all_layer_output, token_residual_directions, scaling_cache = cache).cpu()
-
-
-    if display:    
-        mean_per_head_direct_effect = per_head_direct_effect.mean(dim = (-1, -2))
-        
-        imshow(
-            torch.stack([mean_per_head_direct_effect]),
-            return_fig = False,
-            facet_col = 0,
-            facet_labels = [f"Direct Effect of Heads"],
-            title=title,
-            labels={"x": "Head", "y": "Layer", "color": "Logit Contribution"},
-            #coloraxis=dict(colorbar_ticksuffix = "%"),
-            border=True,
-            width=500,
-            margin={"r": 100, "l": 100}
-        )
-        
-    per_head_direct_effect = per_head_direct_effect.to(device)
-    all_layer_direct_effect = all_layer_direct_effect.to(device)
-    direct_effect_mlp = direct_effect_mlp.to(device)
-        
-    if collect_individual_neurons:
-        return per_head_direct_effect, all_layer_direct_effect, direct_effect_mlp
-    else:
-        return per_head_direct_effect, all_layer_direct_effect
-    
-def return_item(item):
-  return item
-
-
-def dir_effects_from_sample_ablating(attention_heads = None, mlp_layers = None, neurons = None, return_cache = False) -> Union[ActivationCache, Tuple[Float[Tensor, "heads batch pos_minus_one"], Float[Tensor, "n_layer batch pos_minus_one"]]]:
-    """this function gets the new direct effect of all the heads when sample ablating the input head
-    it uses the global cache, owt_tokens, corrupted_owt_tokens
-
-    attention_heads: list of tuples of (layer, head) to ablate
-    mlp_layers: list of layers to ablate
-    neurons: list of tuples of (layer, neuron) to ablate
-    return_cache: whether to return the cache as well as the direct effect
-    """
-
-    # don't accept if more than one input is none
-    assert sum([attention_heads is not None, mlp_layers is not None, neurons is not None]) == 1
-    
-    if attention_heads is not None:
-        new_cache = act_patch(model, owt_tokens, [Node("z", layer, head) for (layer,head) in attention_heads],
-                            return_item, corrupted_owt_tokens, apply_metric_to_cache= True)
-    elif mlp_layers is not None:
-        new_cache = act_patch(model, owt_tokens, [Node("mlp_out", layer) for layer in mlp_layers],
-                            return_item, corrupted_owt_tokens, apply_metric_to_cache= True)
-    elif neurons is not None:
-        new_cache = act_patch(model, owt_tokens, [Node("post", layer = layer, neuron = neuron) for (layer,neuron) in neurons],
-                            return_item, corrupted_owt_tokens, apply_metric_to_cache= True)
-
-        
-    head_direct_effect, mlp_layer_direct_effect = collect_direct_effect(new_cache, owt_tokens, display = False, collect_individual_neurons = False)
-                                            
-    if return_cache:
-        return head_direct_effect, mlp_layer_direct_effect, new_cache
-    else:
-        return head_direct_effect, mlp_layer_direct_effect
 # %%
 # get per component direct effects
-per_head_direct_effect, all_layer_direct_effect, per_neuron_direct_effect  = collect_direct_effect(cache, owt_tokens, display = in_notebook_mode, collect_individual_neurons = True)
+per_head_direct_effect, all_layer_direct_effect, per_neuron_direct_effect = collect_direct_effect(correct_tokens=owt_tokens, display = in_notebook_mode, collect_individual_neurons = True)
 
 
 # %%
 show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)))
 #show_input(per_head_direct_effect.mean((-1,-2)),torch.zeros((model.cfg.n_layers)))
 
-# %%
-histogram(per_head_direct_effect[9,5].flatten(), title = "direct effects of L9H5") # this is a copy suppression head in the model maybe?
-# %%
-histogram(all_layer_direct_effect[-1].flatten())
+# # %%
+# histogram(per_head_direct_effect[9,5].flatten(), title = "direct effects of L9H5") # this is a copy suppression head in the model maybe?
+# # %%
+# histogram(all_layer_direct_effect[-1].flatten())
 
 # %%
 def show_batch_result(batch, start = 40, end = 47, per_head_direct_effect = per_head_direct_effect, all_layer_direct_effect = all_layer_direct_effect):
@@ -386,25 +204,20 @@ if in_notebook_mode:
     show_batch_result(23, start = 12, end = 13, per_head_direct_effect = (per_head_direct_effect), all_layer_direct_effect = (all_layer_direct_effect))
     #utils.test_prompt("""Hannity: GOP's Failure 'Pushed Trump Into Arms of Chuck & Nancy' \n""", "\n", model)
 # %%
-def get_correct_logit_score(
-    logits: Float[Tensor, "batch seq d_vocab"],
-    correct: Float[Tensor, "batch 1"] = owt_tokens,
-):
-    '''
-    Returns logit difference between the correct and incorrect answer.
 
-    If per_prompt=True, return the array of differences rather than the average.
-    '''
-    smaller_logits = logits[:, :-1, :]
-    smaller_correct = correct[:, 1:].unsqueeze(-1)
-
-
-    answer_logits: Float[Tensor, "batch 2"] = smaller_logits.gather(dim=-1, index=smaller_correct)
-    return answer_logits
 
 # %%
+def shuffle_owt_tokens_by_batch(owt_tokens):
+    batch_size, num_tokens = owt_tokens.shape
+    shuffled_owt_tokens = torch.zeros_like(owt_tokens)
+    
+    for i in range(batch_size):
+        perm = torch.randperm(num_tokens)
+        shuffled_owt_tokens[i] = owt_tokens[i, perm]
+        
+    return shuffled_owt_tokens
 
-def create_scatter_of_change_from_component(heads = None, mlp_layers = None, return_slope = False):
+def create_scatter_of_change_from_component(heads = None, mlp_layers = None, return_slope = False, zero_ablate = False, force_through_origin = False, num_runs = 1):
     """"
     this function:
     1) gets the direct effect of all a component when sample ablating it
@@ -413,6 +226,7 @@ def create_scatter_of_change_from_component(heads = None, mlp_layers = None, ret
 
     heads: list of tuples of (layer, head) to ablate
         - all heads need to be in same layer for now
+    force_through_origin: if true, will force the line of best fit to go through the origin
     """
 
     # don't accept if more than one input is none
@@ -437,11 +251,23 @@ def create_scatter_of_change_from_component(heads = None, mlp_layers = None, ret
     if mlp_layers != None:
         nodes += [Node("mlp_out", layer) for layer in mlp_layers]
 
-    new_logits = act_patch(model, owt_tokens, nodes, return_item, corrupted_owt_tokens, apply_metric_to_cache= False)
-    
+    if zero_ablate:
+        new_logits = act_patch(model, owt_tokens, nodes, return_item, new_cache="zero", apply_metric_to_cache= False)
+        diff_in_logits = new_logits - logits
+    else:
+        # use many shuffled!
+        diff_in_logits_accumulator = torch.zeros_like(logits)
+        for i in range(num_runs):
+            # Shuffle owt_tokens by batch
+            shuffled_corrupted_owt_tokens = shuffle_owt_tokens_by_batch(corrupted_owt_tokens)
+            # Calculate new_logits using act_patch
+            new_logits = act_patch(model, owt_tokens, nodes, return_item, shuffled_corrupted_owt_tokens, apply_metric_to_cache=False)
+            # Calculate diff_in_logits
+            diff_in_logits = new_logits - logits
+            # Accumulate
+            diff_in_logits_accumulator += diff_in_logits
 
-    diff_in_logits = new_logits - logits
-
+        diff_in_logits = diff_in_logits_accumulator / num_runs
     # get change in direct effect compared to original
     change_in_direct_effect = get_correct_logit_score(diff_in_logits)
     
@@ -450,8 +276,12 @@ def create_scatter_of_change_from_component(heads = None, mlp_layers = None, ret
     assert direct_effects.shape == change_in_direct_effect.flatten().cpu().shape
 
     # get a best fit line
-    slope, intercept = np.linalg.lstsq(np.vstack([direct_effects, np.ones(len(direct_effects))]).T, change_in_direct_effect.flatten().cpu(), rcond=None)[0]
-
+    if force_through_origin:
+        slope = np.linalg.lstsq(direct_effects.reshape(-1, 1), change_in_direct_effect.flatten().cpu(), rcond=None)[0][0]
+        intercept = 0
+    else:
+        slope, intercept = np.linalg.lstsq(np.vstack([direct_effects, np.ones(len(direct_effects))]).T, change_in_direct_effect.flatten().cpu(), rcond=None)[0]
+    
     if not return_slope:
         fig = go.Figure()
         text_labels = [f"Batch {i[0]}, Pos {i[1]}: {model.to_string(all_owt_tokens[i[0], i[1]:(i[1] + 1)])} --> {model.to_string(all_owt_tokens[i[0], (i[1] + 1):(i[1] + 2)])}" for i in itertools.product(range(BATCH_SIZE), range(PROMPT_LEN - 1))]
@@ -487,8 +317,8 @@ def create_scatter_of_change_from_component(heads = None, mlp_layers = None, ret
 
         component = heads if heads is not None else mlp_layers
         fig.update_layout(
-            title=f"Change in Final Logits vs Direct Effect for {component} in {model_name} for each Position and Batch" if heads is not None 
-            else f"Change in Final Logits vs Direct Effect for MLP Layer {component} in {model_name} for each Position and Batch",
+            title=f"Change in Final Logits vs Direct Effect for {component} in {model_name} for each Position and Batch. zero_ablate = {zero_ablate}" if heads is not None 
+            else f"Change in Final Logits vs Direct Effect for MLP Layer {component} in {model_name} for each Position and Batch. zero_ablate = {zero_ablate}",
         )
         fig.update_xaxes(title = f"Direct Effect of Head {heads[0]}" if heads is not None else f"Direct Effect of MLP Layer {mlp_layers[0]}")
         fig.update_yaxes(title = "Change in Final Logits")
@@ -498,14 +328,16 @@ def create_scatter_of_change_from_component(heads = None, mlp_layers = None, ret
     if return_slope:
         return slope
 # %%
-create_scatter_of_change_from_component(heads = [(1,8)])
+#create_scatter_of_change_from_component(heads = [(9,9)], force_through_origin=False)
 
+
+create_scatter_of_change_from_component(mlp_layers = [11], zero_ablate=False, force_through_origin=True, num_runs = 10)
 # %%
 
 slopes_of_head_backup = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
 for layer in tqdm(range(model.cfg.n_layers)):
     for head in range(model.cfg.n_heads):
-        slopes_of_head_backup[layer, head] = create_scatter_of_change_from_component(heads = [(layer, head)], return_slope = True)
+        slopes_of_head_backup[layer, head] = create_scatter_of_change_from_component(heads = [(layer, head)], return_slope = True, zero_ablate = False, force_through_origin=True, num_runs=5).item()
         
 
 
@@ -515,53 +347,10 @@ if in_notebook_mode:
     fig.show()
 
 # %%
-
-# # save figure
-# fig.write_image(f"slopes_of_head_backup_{safe_model_name}.png")
-
-
-
-# # %%
-# # create another figure plotting the cre vs the direct effect of the head
-# # Flatten the tensors for plotting
-# flattened_avg_direct_effect = per_head_direct_effect.mean((-1,-2)).flatten().cpu().numpy()
-# layers_list = [l for l in range(model.cfg.n_layers) for _ in range(model.cfg.n_heads)]
-
-# fig2 = go.Figure()
-# fig2.add_trace(go.Scatter(
-#     x=flattened_avg_direct_effect,
-#     y=cre_of_heads.flatten(),
-#     mode='markers',
-#     marker=dict(
-#         size=10,
-#         opacity=0.5,
-#         line=dict(width=1),
-#         color=layers_list,  # Setting color based on layer
-#         colorscale='Viridis',  # Using Viridis colorscale, but you can choose any other available colorscale
-#         colorbar=dict(title='Layer'),  # Adding a colorbar to denote layers
-#     ),
-#     text=[f"Layer {l}, Head {h}" for l in range(model.cfg.n_layers) for h in range(model.cfg.n_heads)]
-# ))
-
-# # Add titles and labels
-# fig2.update_layout(
-#     title=f"Compensatory Response Effect vs Average Direct Effect in {model_name}",
-#     xaxis_title="Average Direct Effect",
-#     yaxis_title="Average Compensatory Response Effect",
-#     hovermode="closest"  # Hover over data points to see the text
-# )
-# if in_notebook_mode:
-#     fig2.show()
-
-
-# # Save the figure
-# fig2.write_image(f"cre_vs_avg_direct_effect_{safe_model_name}.png")
-
-# %%
 # Do the same thing but for MLP layers
 slopes_of_mlp_backup = torch.zeros((model.cfg.n_layers))
 for layer in tqdm(range(model.cfg.n_layers)):
-    slopes_of_mlp_backup[layer] = create_scatter_of_change_from_component(mlp_layers = [layer], return_slope = True)
+    slopes_of_mlp_backup[layer] = create_scatter_of_change_from_component(mlp_layers = [layer], return_slope = True, zero_ablate = True)
 
 # %%
 fig = imshow(einops.repeat(slopes_of_mlp_backup, "a -> a 1"), title = f"Slopes of MLP Backup in {model_name}",
@@ -586,40 +375,7 @@ if in_notebook_mode:
     
     #hist(all_layer_direct_effect[-1].flatten().cpu())
 
-# %%
 
-
-
-
-
-# %% 
-# Get the extent to which heads can have downstream heads act positively, rather than negatively
-# pairs_of_head_backup = {}
-# pairs_of_mlp_backup = {}
-# threshold = 0.05
-# for layer in tqdm(range(model.cfg.n_layers)):
-#     for head in range(model.cfg.n_heads):
-#         temp_head_effect, temp_mlp_effect = dir_effects_from_sample_ablating(attention_heads = [(layer, head)])
-#         head_backup: Float[Tensor, "layer head"] = temp_head_effect.mean((-1,-2)) - per_head_direct_effect.mean((-1,-2))
-#         mlp_backup: Float[Tensor, "layer"] = temp_mlp_effect.mean((-1,-2)) - all_layer_direct_effect.mean((-1,-2))
-
-#         if (head_backup > threshold).sum() > 0:
-#             pairs_of_head_backup[(layer, head)] = True
-#         else:
-#             pairs_of_head_backup[(layer, head)] = False
-
-#         if (mlp_backup > threshold).sum() > 0:
-#             pairs_of_mlp_backup[layer] = True
-#         else:
-#             pairs_of_mlp_backup[layer] = False
-
-# for layer, head in pairs_of_head_backup.keys():
-#     if pairs_of_head_backup[(layer, head)]:
-#         print((layer, head))
-
-# for layer in range(12):
-#     if pairs_of_mlp_backup[layer]:
-#         print(layer)
 
 # %%
 
@@ -880,3 +636,37 @@ dot_prods = einops.einsum(scaled_residual_stack, effect_directions, "... batch p
 
 dot_prods[-1, 53, 12]
 # %%
+
+
+
+
+
+# %% graveyard:
+# ----------------------------------------------------------------
+# Get the extent to which heads can have downstream heads act positively, rather than negatively
+# pairs_of_head_backup = {}
+# pairs_of_mlp_backup = {}
+# threshold = 0.05
+# for layer in tqdm(range(model.cfg.n_layers)):
+#     for head in range(model.cfg.n_heads):
+#         temp_head_effect, temp_mlp_effect = dir_effects_from_sample_ablating(attention_heads = [(layer, head)])
+#         head_backup: Float[Tensor, "layer head"] = temp_head_effect.mean((-1,-2)) - per_head_direct_effect.mean((-1,-2))
+#         mlp_backup: Float[Tensor, "layer"] = temp_mlp_effect.mean((-1,-2)) - all_layer_direct_effect.mean((-1,-2))
+
+#         if (head_backup > threshold).sum() > 0:
+#             pairs_of_head_backup[(layer, head)] = True
+#         else:
+#             pairs_of_head_backup[(layer, head)] = False
+
+#         if (mlp_backup > threshold).sum() > 0:
+#             pairs_of_mlp_backup[layer] = True
+#         else:
+#             pairs_of_mlp_backup[layer] = False
+
+# for layer, head in pairs_of_head_backup.keys():
+#     if pairs_of_head_backup[(layer, head)]:
+#         print((layer, head))
+
+# for layer in range(12):
+#     if pairs_of_mlp_backup[layer]:
+#         print(layer)

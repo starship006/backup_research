@@ -22,7 +22,7 @@ from typing import Union, List, Optional, Callable, Tuple, Dict, Literal, Set
 from jaxtyping import Float, Int
 from jaxtyping import Float, Int, Bool, Shaped, jaxtyped
 import typeguard
-from functools import partial
+from functools import partial, wraps
 import copy
 
 import itertools
