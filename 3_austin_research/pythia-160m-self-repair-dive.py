@@ -25,7 +25,7 @@ model = HookedTransformer.from_pretrained(
 model.set_use_attn_result(True)
 # %%
 owt_dataset = utils.get_dataset("owt")
-BATCH_SIZE = 150
+BATCH_SIZE = 250
 PROMPT_LEN = 50
 
 
@@ -46,7 +46,8 @@ globals().update(partials)
 
 # %%
 # get per component direct effects
-per_head_direct_effect, all_layer_direct_effect, per_neuron_direct_effect = collect_direct_effect(correct_tokens=owt_tokens, display = in_notebook_mode, collect_individual_neurons = True)
+# this takes TONS of memory, i should decrease
+per_head_direct_effect, all_layer_direct_effect = collect_direct_effect(cache, correct_tokens=owt_tokens, display = in_notebook_mode, collect_individual_neurons = False)
 
 
 # %%
@@ -59,6 +60,16 @@ show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-
 # histogram(all_layer_direct_effect[-1].flatten())
 
 # %%
+def print_tokens(batch, start = 40, end = 47):
+    """
+    Prints the tokens for a batch. Shares same indexing.
+    """
+    print(model.to_string(all_owt_tokens[batch, 0:start]))
+    print("...")
+    print(model.to_string(all_owt_tokens[batch, start:end]))
+    # print("...")
+    # print(model.to_string(all_owt_tokens[batch, end:]))
+
 def show_batch_result(batch, start = 40, end = 47, per_head_direct_effect = per_head_direct_effect, all_layer_direct_effect = all_layer_direct_effect):
     """
     highlights the text selection, along with the mean effect of the range
@@ -68,11 +79,7 @@ def show_batch_result(batch, start = 40, end = 47, per_head_direct_effect = per_
     so, if the interesting self-repair you are observing seems to be at pos 12, this means it is for the prediction of token 13
     """
     
-    print(model.to_string(all_owt_tokens[batch, 0:start]))
-    print("...")
-    print(model.to_string(all_owt_tokens[batch, start:end]))
-    print("...")
-    print(model.to_string(all_owt_tokens[batch, end:]))
+    print_tokens(start, end)
     show_input(per_head_direct_effect[..., batch, start:end].mean(-1),all_layer_direct_effect[:, batch, start:end].mean(-1), title = f"Direct Effect of Heads on batch {batch}")
 
 
@@ -194,19 +201,6 @@ def create_scatter_of_backup_of_component(heads = None, mlp_layers = None, retur
     if return_slope:
         return slope
     
-# %%
-if in_notebook_mode:
-    #create_scatter_of_backup_of_component(mlp_layers = [10])
-    #create_scatter_of_backup_of_component(heads = [(10,7)])
-    create_scatter_of_backup_of_component(heads = [(1,8)]) # the head in gpt2-small which has insane downstream impact
-    ablated_de, ablated_layer_de = dir_effects_from_sample_ablating(attention_heads=[(1,8)])
-    #show_batch_result(23, start = 12, end = 13, per_head_direct_effect = (ablated_de - per_head_direct_effect), all_layer_direct_effect = (ablated_layer_de - all_layer_direct_effect))
-    show_batch_result(23, start = 12, end = 13, per_head_direct_effect = (per_head_direct_effect), all_layer_direct_effect = (all_layer_direct_effect))
-    #utils.test_prompt("""Hannity: GOP's Failure 'Pushed Trump Into Arms of Chuck & Nancy' \n""", "\n", model)
-# %%
-
-
-# %%
 def shuffle_owt_tokens_by_batch(owt_tokens):
     batch_size, num_tokens = owt_tokens.shape
     shuffled_owt_tokens = torch.zeros_like(owt_tokens)
@@ -217,7 +211,7 @@ def shuffle_owt_tokens_by_batch(owt_tokens):
         
     return shuffled_owt_tokens
 
-def create_scatter_of_change_from_component(heads = None, mlp_layers = None, return_slope = False, zero_ablate = False, force_through_origin = False, num_runs = 1):
+def create_scatter_of_change_from_component(heads = None, mlp_layers = None, return_slope = False, zero_ablate = False, force_through_origin = False, num_runs = 1, logits = logits):
     """"
     this function:
     1) gets the direct effect of all a component when sample ablating it
@@ -327,11 +321,77 @@ def create_scatter_of_change_from_component(heads = None, mlp_layers = None, ret
     
     if return_slope:
         return slope
+
+def get_top_self_repair_prompts(heads = None, mlp_layers = None, topk = 10, num_runs = 5, logits = logits):
+    assert sum([heads is not None, mlp_layers is not None]) == 1
+
+    # make sure all heads are in same layer
+    if heads is not None:
+        assert len(set([layer for (layer, head) in heads])) == 1
+        layer = heads[0][0]
+        head = heads[0][1]
+        #print(layer)
+    elif mlp_layers is not None:
+        # layer is max of all the layers
+        layer = max(mlp_layers)
+    else:
+        raise Exception("No heads or mlp layers given")
+    
+    nodes = []
+    if heads != None :
+        nodes += [Node("z", layer, head) for (layer,head) in heads]
+    if mlp_layers != None:
+        nodes += [Node("mlp_out", layer) for layer in mlp_layers]
+
+    
+    # use many shuffled!
+    diff_in_logits_accumulator = torch.zeros_like(logits)
+    for i in range(num_runs):
+        # Shuffle owt_tokens by batch
+        shuffled_corrupted_owt_tokens = shuffle_owt_tokens_by_batch(corrupted_owt_tokens)
+        # Calculate new_logits using act_patch
+        new_logits = act_patch(model, owt_tokens, nodes, return_item, shuffled_corrupted_owt_tokens, apply_metric_to_cache=False)
+        # Calculate diff_in_logits
+        diff_in_logits = new_logits - logits
+        # Accumulate
+        diff_in_logits_accumulator += diff_in_logits
+
+    diff_in_logits = diff_in_logits_accumulator / num_runs
+    # get change in direct effect compared to original
+    change_in_direct_effect = get_correct_logit_score(diff_in_logits)
+    print(change_in_direct_effect.shape)
+    # get topk
+    topk_indices = topk_of_Nd_tensor(change_in_direct_effect, k = topk)
+    return topk_indices
+
+
 # %%
 #create_scatter_of_change_from_component(heads = [(9,9)], force_through_origin=False)
 
+create_scatter_of_change_from_component(heads = [(8,2)], zero_ablate=False, force_through_origin=True, num_runs = 2)
+#create_scatter_of_change_from_component(mlp_layers = [11], zero_ablate=False, force_through_origin=True, num_runs = 10)
+# %%
+top_prompts = get_top_self_repair_prompts(heads = [(8,2)], topk = 30)
+for batch, pos, _ in top_prompts:
+    print_tokens(batch, pos, pos + 1)
+    print("\n------ new prompt: ------\n\n")
 
-create_scatter_of_change_from_component(mlp_layers = [11], zero_ablate=False, force_through_origin=True, num_runs = 10)
+
+# %%\
+if in_notebook_mode:
+    #create_scatter_of_backup_of_component(mlp_layers = [10])
+    #create_scatter_of_backup_of_component(heads = [(10,7)])
+    create_scatter_of_backup_of_component(heads = [(8,2)]) # the head in gpt2-small which has insane downstream impact
+    #ablated_de, ablated_layer_de = dir_effects_from_sample_ablating(attention_heads=[(1,8)])
+    #show_batch_result(23, start = 12, end = 13, per_head_direct_effect = (ablated_de - per_head_direct_effect), all_layer_direct_effect = (ablated_layer_de - all_layer_direct_effect))
+    #show_batch_result(23, start = 12, end = 13, per_head_direct_effect = (per_head_direct_effect), all_layer_direct_effect = (all_layer_direct_effect))
+    #utils.test_prompt("""Hannity: GOP's Failure 'Pushed Trump Into Arms of Chuck & Nancy' \n""", "\n", model)
+
+
+
+
+
+
 # %%
 
 slopes_of_head_backup = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
@@ -345,6 +405,16 @@ fig = imshow(slopes_of_head_backup, title = f"Slopes of Component Influence on T
        text_auto = True, width = 800, height = 800, return_fig=True) # show a number above each square)
 if in_notebook_mode: 
     fig.show()
+
+
+# %% ##Get top examples of self-repair
+off = 6
+tops = topk_of_Nd_tensor(slopes_of_head_backup[off:], k = 10)
+print(tops)
+
+if True:
+    for layer, head in tops:
+        create_scatter_of_change_from_component(heads = [(layer + off, head)], force_through_origin=True, num_runs=2)
 
 # %%
 # Do the same thing but for MLP layers
@@ -377,10 +447,43 @@ if in_notebook_mode:
 
 
 
-# %%
+# %% -- Observation; it seems like the direct effects of layer 11 are strangely positive.
+flattened_tensors = [per_head_direct_effect[i].flatten().cpu() for i in range(model.cfg.n_layers)]
+df = pd.DataFrame({
+    'Direct_Effect': np.concatenate(flattened_tensors),
+    'Layer': np.concatenate([[f'Layer_{i}'] * len(tensor) for i, tensor in enumerate(flattened_tensors)])
+})
+
+# Create the histogram
+fig = px.histogram(df, x="Direct_Effect", color="Layer", barmode="overlay", nbins=400)
+
+# Set the range of the histogram
+
+
+# Add titles
+fig.update_layout(
+    title="Direct Effects Across Layers",
+    xaxis_title="Direct Effect Value",
+    yaxis_title="Frequency",
+    barmode='overlay'
+)
+fig.update_xaxes(range=[-3, 7])
+fig.update_traces(xbins=dict(start=-3, end=7, size=0.1))
+
+# Show the plot
+fig.show()
 
 # %%
+means = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
+for layer in range(model.cfg.n_layers):
+    for head in range(model.cfg.n_heads):
+        means[layer, head] = per_head_direct_effect[layer, head].mean()
 
+
+imshow(means)
+
+
+# %%
 
 def get_threholded_de_cre(heads = None, mlp_layers = None, thresholds = [0.5]):
     """"
@@ -430,7 +533,7 @@ def get_threholded_de_cre(heads = None, mlp_layers = None, thresholds = [0.5]):
     # 3) filter for indices wherer per_head_direct_effect is greater than threshold
     to_return = {}
     for threshold in thresholds:
-        mask_direct_effect: Float[Tensor, "batch pos"] = per_head_direct_effect[layer, head] > threshold
+        mask_direct_effect: Float[Tensor, "batch pos"] = per_head_direct_effect[layer, head].abs() > threshold
         # Using masked_select to get the relevant values based on the mask.
         selected_cre = total_backup.masked_select(mask_direct_effect)
         selected_de = per_head_direct_effect[layer, head].masked_select(mask_direct_effect)
@@ -444,20 +547,8 @@ def get_threholded_de_cre(heads = None, mlp_layers = None, thresholds = [0.5]):
 
 
 
-def plot_thresholded_de_vs_cre(thresholds = [1]):
-    thresholded_de = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
-    thresholded_cre = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
-    thresholded_count = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
-
-    for layer in tqdm(range(model.cfg.n_layers)):
-        for head in range(model.cfg.n_heads):
-            dict_results = get_threholded_de_cre(heads = [(layer, head)], thresholds = thresholds)
-            for i, threshold in enumerate(thresholds):
-                thresholded_de[i, layer, head] = dict_results[f"de_{threshold}"]
-                thresholded_cre[i, layer, head] = dict_results[f"cre_{threshold}"]
-                thresholded_count[i, layer, head] = dict_results[f"num_thresholded_{threshold}"]
-
-    
+def plot_thresholded_de_vs_cre(threshold_de, threshold_cre, threshold_count):
+       
     layers_list = [l for l in range(model.cfg.n_layers) for _ in range(model.cfg.n_heads)]
     
     fig = go.Figure()
@@ -483,8 +574,8 @@ def plot_thresholded_de_vs_cre(thresholds = [1]):
         )
 
         line_trace = go.Scatter(
-            x=torch.linspace(0, max(thresholded_de[i].masked_fill(torch.isnan(thresholded_de[i]), -float('inf')).flatten()), 100),
-            y=torch.linspace(0, max(thresholded_de[i].masked_fill(torch.isnan(thresholded_de[i]), -float('inf')).flatten()), 100),
+            x=torch.linspace(-2, 2, 100),
+            y=torch.linspace(-2, 2, 100),
             mode='lines',
             line=dict(dash='dash'),
             visible=visible
@@ -583,9 +674,175 @@ def plot_thresholded_de_vs_cre(thresholds = [1]):
         fig.show()
     
     fig.write_html(f"threshold_figures/threshold_{safe_model_name}_cre_vs_avg_direct_effect_slider.html")
+
+
+def gpt_new_plot_thresholded_de_vs_cre(threshold_de, threshold_cre, thresholds):
+    # Generate a list of (layer, head) tuples for sorting
+    layer_head_list = [(l, h) for l in range(model.cfg.n_layers) for h in range(model.cfg.n_heads)]
+    x_labels = [f"L{layer}H{head}" for layer in range(model.cfg.n_layers) for head in range(model.cfg.n_heads)]
+    
+    fig = go.Figure()
+
+    for i, threshold in enumerate(thresholds):
+        visible = (i == 0)  # Only the first threshold is visible initially
+
+        # Sort based on layer and head
+        sorted_indices = sorted(range(len(layer_head_list)), key=lambda k: layer_head_list[k])
+        sorted_de = thresholded_de[i].flatten()[sorted_indices]
+        sorted_cre = thresholded_cre[i].flatten()[sorted_indices]
+
+        scatter_trace = go.Scatter(
+            x=x_labels,  # x-axis is just indices after sorting
+            y=sorted_cre.numpy(),  # Sorted CRE values
+            mode='markers',
+            marker=dict(
+                size=10,
+                opacity=0.5,
+                line=dict(width=1),
+                color=sorted_de.numpy(),  # Color by direct effect
+                colorscale='RdBu',  # Red to Blue scale
+                colorbar=dict(title='Direct Effect', y=10),
+            ),
+            text=[f"Layer {layer_head_list[i][0]}, Head {layer_head_list[i][1]}" for i in sorted_indices],
+            visible=visible,
+            name=f"Threshold: {threshold}"
+        )
+        
+        fig.add_trace(scatter_trace)
+    
+    frames = []
+    for i, threshold in enumerate(thresholds):
+        sorted_indices = sorted(range(len(layer_head_list)), key=lambda k: layer_head_list[k])
+        sorted_de = thresholded_de[i].flatten()[sorted_indices]
+        sorted_cre = thresholded_cre[i].flatten()[sorted_indices]
+
+        frame = go.Frame(
+            data=[
+                go.Scatter(
+                    x=x_labels,
+                    y=sorted_cre.numpy(),
+                    mode='markers',
+                    marker=dict(
+                        size=10,
+                        opacity=0.5,
+                        line=dict(width=1),
+                        color=sorted_de.numpy(),
+                        colorscale='RdBu',
+                        colorbar=dict(title='Direct Effect', y=10),
+                    ),
+                    text=[f"Layer {layer_head_list[i][0]}, Head {layer_head_list[i][1]}" for i in sorted_indices],
+                )
+            ],
+            name=str(threshold)
+        )
+        frames.append(frame)
+
+    fig.frames = frames
+    
+    steps = []
+    for i, threshold in enumerate(thresholds):
+        sorted_indices = sorted(range(len(layer_head_list)), key=lambda k: layer_head_list[k])
+        sorted_cre = thresholded_cre[i].flatten()[sorted_indices]
+        
+        # Calculate the y-axis range for this threshold
+        y_min = sorted_cre.min().item() - 0.1  # Adding some padding
+        y_max = sorted_cre.max().item() + 0.1
+        print(y_min, y_max)
+
+        step = {
+            'args': [
+                [str(threshold)],  # Frame name to show
+                {
+                    'frame': {'duration': 300, 'redraw': True},
+                    'mode': 'immediate',
+                    'transition': {'duration': 300},
+                    'relayout': {'yaxis.range': [y_min, y_max]}  # Update y-axis range
+                }
+            ],
+            'label': str(threshold),
+            'method': 'animate'
+        }
+        steps.append(step)
+
+
+    sliders = [dict(
+        yanchor='top',
+        xanchor='left',
+        currentvalue={'font': {'size': 16}, 'prefix': 'Threshold: ', 'visible': True, 'xanchor': 'right'},
+        transition={'duration': 300, 'easing': 'cubic-in-out'},
+        pad={'b': 10, 't': 50},
+        len=0.9,
+        x=0.1,
+        y=0,
+        steps=steps
+    )]
+
+    fig.update_layout(
+        sliders=sliders,
+        title=f"Thresholded Compensatory Response Effect vs Average Direct Effect in {model_name}",
+        xaxis_title="Average Direct Effect",
+        yaxis_title="Average Compensatory Response Effect",
+        hovermode="closest",
+        updatemenus=[{
+            'buttons': [
+                {
+                    'args': [None, {'frame': {'duration': 500, 'redraw': True}, 'fromcurrent': True, 'transition': {'duration': 300, 'easing': 'quadratic-in-out'}}],
+                    'label': 'Play',
+                    'method': 'animate'
+                },
+                {
+                    'args': [[None], {'frame': {'duration': 0, 'redraw': True}, 'mode': 'immediate', 'transition': {'duration': 0}}],
+                    'label': 'Pause',
+                    'method': 'animate'
+                }
+            ],
+            'direction': 'left',
+            'pad': {'r': 10, 't': 87},
+            'showactive': False,
+            'type': 'buttons',
+            'x': 0.1,
+            'xanchor': 'right',
+            'y': 0,
+            'yanchor': 'top'
+        }],
+        width=1000,
+        height=400,
+        showlegend=False,
+    )
+    if in_notebook_mode:
+        fig.show()
+    
+    fig.write_html(f"threshold_figures/threshold_{safe_model_name}_cre_vs_avg_direct_effect_slider.html")
+
+    
+
+
+# %%
+
+thresholds = [0.1 * i for i in range(0,12)]
+
+thresholded_de = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
+thresholded_cre = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
+thresholded_count = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
+
+for layer in tqdm(range(model.cfg.n_layers)):
+    for head in range(model.cfg.n_heads):
+        dict_results = get_threholded_de_cre(heads = [(layer, head)], thresholds = thresholds)
+        for i, threshold in enumerate(thresholds):
+            thresholded_de[i, layer, head] = dict_results[f"de_{threshold}"]
+            thresholded_cre[i, layer, head] = dict_results[f"cre_{threshold}"]
+            thresholded_count[i, layer, head] = dict_results[f"num_thresholded_{threshold}"]
+
+
+# %%
+#plot_thresholded_de_vs_cre(thresholded_de, thresholded_cre, thresholded_count)
+
+# %%
+gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cre, thresholds)
+
 # %%
 #plot_thresholded_de_vs_cre([-99999999999999999])
-plot_thresholded_de_vs_cre([0.1 * i for i in range(0,12)])
+#plot_thresholded_de_vs_cre([0.1 * i for i in range(0,12)])
 # %%
 
 

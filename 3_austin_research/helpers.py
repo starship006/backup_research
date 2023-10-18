@@ -122,7 +122,7 @@ def show_input(input_head_values: Float[Tensor, "n_layer n_head"], input_MLP_lay
 
 
 @to_partial
-def collect_direct_effect(cache: ActivationCache = None, correct_tokens: Float[Tensor, "batch seq_len"] = None, model: HookedTransformer = None, 
+def collect_direct_effect(de_cache: ActivationCache = None, correct_tokens: Float[Tensor, "batch seq_len"] = None, model: HookedTransformer = None, 
                            title = "Direct Effect of Heads", display = True, collect_individual_neurons = False) -> Tuple[Float[Tensor, "n_layer n_head batch pos_minus_one"], Float[Tensor, "n_layer batch pos_minus_one"], Float[Tensor, "n_layer d_mlp batch pos_minus_one"]]:
     """
     Given a cache of activations, and a set of correct tokens, returns the direct effect of each head and neuron on each token.
@@ -135,16 +135,16 @@ def collect_direct_effect(cache: ActivationCache = None, correct_tokens: Float[T
     display: whether to display the plot or return the data; if False, returns [head, pos] tensor of direct effects
     """
 
-    if cache is None or correct_tokens is None or model is None:
-        raise ValueError("cache, correct_tokens, and model must not be None")
+    if de_cache is None or correct_tokens is None or model is None:
+        raise ValueError("de_cache, correct_tokens, and model must not be None")
 
     token_residual_directions: Float[Tensor, "batch seq_len d_model"] = model.tokens_to_residual_directions(correct_tokens)
     
     # get the direct effect of heads by positions
-    clean_per_head_residual: Float[Tensor, "head batch seq d_model"] = cache.stack_head_results(layer = -1, return_labels = False, apply_ln = False)
+    clean_per_head_residual: Float[Tensor, "head batch seq d_model"] = de_cache.stack_head_results(layer = -1, return_labels = False, apply_ln = False)
     
     #print(clean_per_head_residual.shape)
-    per_head_direct_effect: Float[Tensor, "heads batch pos_minus_one"] = residual_stack_to_direct_effect(clean_per_head_residual, token_residual_directions, True, scaling_cache = cache)
+    per_head_direct_effect: Float[Tensor, "heads batch pos_minus_one"] = residual_stack_to_direct_effect(clean_per_head_residual, token_residual_directions, True, scaling_cache = de_cache)
     
     
     per_head_direct_effect = einops.rearrange(per_head_direct_effect, "(n_layer n_head) batch pos -> n_layer n_head batch pos", n_layer = model.cfg.n_layers, n_head = model.cfg.n_heads)
@@ -156,14 +156,14 @@ def collect_direct_effect(cache: ActivationCache = None, correct_tokens: Float[T
     # iterate over every neuron to avoid memory issues
     if collect_individual_neurons:
         for neuron in tqdm(range(model.cfg.d_mlp)):
-            single_neuron_output: Float[Tensor, "n_layer batch pos d_model"] = cache.stack_neuron_results(layer = -1, neuron_slice = (neuron, neuron + 1), return_labels = False, apply_ln = False)
-            direct_effect_mlp[:, neuron, :, :] = residual_stack_to_direct_effect(single_neuron_output, token_residual_directions, scaling_cache = cache).cpu()
+            single_neuron_output: Float[Tensor, "n_layer batch pos d_model"] = de_cache.stack_neuron_results(layer = -1, neuron_slice = (neuron, neuron + 1), return_labels = False, apply_ln = False)
+            direct_effect_mlp[:, neuron, :, :] = residual_stack_to_direct_effect(single_neuron_output, token_residual_directions, scaling_cache = de_cache).cpu()
     # get per mlp layer effect
     all_layer_output: Float[Tensor, "n_layer batch pos d_model"] = torch.zeros((model.cfg.n_layers, correct_tokens.shape[0], correct_tokens.shape[1], model.cfg.d_model)).cuda()
     for layer in range(model.cfg.n_layers):
-        all_layer_output[layer, ...] = cache[f'blocks.{layer}.hook_mlp_out']
+        all_layer_output[layer, ...] = de_cache[f'blocks.{layer}.hook_mlp_out']
 
-    all_layer_direct_effect: Float["n_layer batch pos_minus_one"] = residual_stack_to_direct_effect(all_layer_output, token_residual_directions, scaling_cache = cache).cpu()
+    all_layer_direct_effect: Float["n_layer batch pos_minus_one"] = residual_stack_to_direct_effect(all_layer_output, token_residual_directions, scaling_cache = de_cache).cpu()
 
 
     if display:    
