@@ -245,4 +245,4 @@ def get_correct_logit_score(
     smaller_logits = logits[:, :-1, :]
     smaller_correct = clean_tokens[:, 1:].unsqueeze(-1)
     answer_logits: Float[Tensor, "batch 2"] = smaller_logits.gather(dim=-1, index=smaller_correct)
-    return answer_logits
+    return answer_logits.squeeze() # get rid of last index of size one

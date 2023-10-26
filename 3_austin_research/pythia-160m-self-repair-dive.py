@@ -6,7 +6,7 @@ from helpers import return_partial_functions, return_item, topk_of_Nd_tensor, re
 # %%
 in_notebook_mode = True
 if in_notebook_mode:
-    model_name = "pythia-160m"
+    model_name = "gpt2-medium"
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
@@ -25,13 +25,41 @@ model = HookedTransformer.from_pretrained(
 model.set_use_attn_result(True)
 # %%
 owt_dataset = utils.get_dataset("owt")
-BATCH_SIZE = 250
-PROMPT_LEN = 50
+owt_dataset_name = "owt"
+#BATCH_SIZE = 300
+#PROMPT_LEN = 50
+BATCH_SIZE = 150
+PROMPT_LEN = 30
 
 
-all_owt_tokens = model.to_tokens(owt_dataset[0:BATCH_SIZE * 2]["text"]).to(device)
+if owt_dataset_name == "owt":
+    bad_prompts =  [149] # outlier examples; maybe red team some day? for the 
+    #bad_prompts =  [200, 174, 243, 149] # outlier examples; maybe red team some day? for the 
+else:
+    bad_prompts = []
+
+# %% Given above batch/prompt descriptions, load cached data
+SAMPLE_ABLATE_CORRECT_LOGIT_DIR_NAME = f"pickle_storage/{safe_model_name}_{owt_dataset_name}_sample_ablate_new_logits_cache_{BATCH_SIZE}_{PROMPT_LEN}.pkl"
+new_logits_after_sample = {}
+try:
+    with open(SAMPLE_ABLATE_CORRECT_LOGIT_DIR_NAME, 'rb') as f:
+        new_logits_after_sample = pickle.load(f)
+except FileNotFoundError:
+    print("oh, new combo? guess we gonna have to rebuild the cache")
+    
+
+# %% Load tokens
+all_owt_tokens = model.to_tokens(owt_dataset[0:(BATCH_SIZE * 2 + len(bad_prompts))]["text"]).to(device)
 owt_tokens = all_owt_tokens[0:BATCH_SIZE][:, :PROMPT_LEN]
 corrupted_owt_tokens = all_owt_tokens[BATCH_SIZE:BATCH_SIZE * 2][:, :PROMPT_LEN]
+extra_prompts = all_owt_tokens[(BATCH_SIZE * 2):][:, :PROMPT_LEN]
+
+
+for i, prompt in enumerate(bad_prompts):
+  owt_tokens[prompt] = extra_prompts[i]
+
+
+
 assert owt_tokens.shape == corrupted_owt_tokens.shape == (BATCH_SIZE, PROMPT_LEN)
 
 # %%
@@ -69,6 +97,70 @@ def print_tokens(batch, start = 40, end = 47):
     print(model.to_string(all_owt_tokens[batch, start:end]))
     # print("...")
     # print(model.to_string(all_owt_tokens[batch, end:]))
+
+
+
+def change_in_ld_calc(heads = None, mlp_layers = None, num_runs = 5, logits = logits):
+    """
+    runs activation patching over component and returns new avg_correct_logit_score, averaged over num_runs runs
+    this is the average logit of the correct token upon num_runs sample ablations
+    logits just used for size
+    """
+    
+    nodes = []
+    if heads != None :
+        nodes += [Node("z", layer, head) for (layer,head) in heads]
+    if mlp_layers != None:
+        nodes += [Node("mlp_out", layer) for layer in mlp_layers]
+
+    # use many shuffled!
+    logits_accumulator = torch.zeros_like(logits)
+    for i in range(num_runs):
+        # Shuffle owt_tokens by batch
+        shuffled_corrupted_owt_tokens = shuffle_owt_tokens_by_batch(corrupted_owt_tokens)
+        # Calculate new_logits using act_patch
+        new_logits = act_patch(model, owt_tokens, nodes, return_item, shuffled_corrupted_owt_tokens, apply_metric_to_cache=False)
+        logits_accumulator += new_logits
+
+    avg_logits = logits_accumulator / num_runs
+    # get change in direct effect compared to original
+    avg_correct_logit_score = get_correct_logit_score(avg_logits)
+    return avg_correct_logit_score
+
+def new_logits_after_sample_wrapper(heads=None, mlp_layers=None, num_runs=5, logits=logits):
+    if num_runs != 5:
+        raise Exception("num_runs must be 5 for now")
+    if heads is not None:
+        assert len(set([layer for (layer, head) in heads])) == 1
+        layer = heads[0][0]
+        head = heads[0][1]
+        direct_effect = per_head_direct_effect[layer, head]
+        #print(layer)
+    elif mlp_layers is not None:
+        # layer is max of all the layers
+        layer = max(mlp_layers)
+        direct_effect = all_layer_direct_effect[layer]
+    else:
+        raise Exception("No heads or mlp layers given")
+    
+
+    key = "H:" + str(heads) +  "M:" + str(mlp_layers)
+    if key in new_logits_after_sample:
+        print("Returning cached activation")
+        return new_logits_after_sample[key]
+    
+    result = change_in_ld_calc(heads, mlp_layers, num_runs, logits)
+    
+    new_logits_after_sample[key] = result
+    
+    with open(SAMPLE_ABLATE_CORRECT_LOGIT_DIR_NAME, 'wb') as f:
+        pickle.dump(new_logits_after_sample, f)
+        
+    return result
+
+
+
+
 
 def show_batch_result(batch, start = 40, end = 47, per_head_direct_effect = per_head_direct_effect, all_layer_direct_effect = all_layer_direct_effect):
     """
@@ -248,22 +340,10 @@ def create_scatter_of_change_from_component(heads = None, mlp_layers = None, ret
     if zero_ablate:
         new_logits = act_patch(model, owt_tokens, nodes, return_item, new_cache="zero", apply_metric_to_cache= False)
         diff_in_logits = new_logits - logits
+        change_in_direct_effect = get_correct_logit_score(diff_in_logits)
     else:
-        # use many shuffled!
-        diff_in_logits_accumulator = torch.zeros_like(logits)
-        for i in range(num_runs):
-            # Shuffle owt_tokens by batch
-            shuffled_corrupted_owt_tokens = shuffle_owt_tokens_by_batch(corrupted_owt_tokens)
-            # Calculate new_logits using act_patch
-            new_logits = act_patch(model, owt_tokens, nodes, return_item, shuffled_corrupted_owt_tokens, apply_metric_to_cache=False)
-            # Calculate diff_in_logits
-            diff_in_logits = new_logits - logits
-            # Accumulate
-            diff_in_logits_accumulator += diff_in_logits
-
-        diff_in_logits = diff_in_logits_accumulator / num_runs
-    # get change in direct effect compared to original
-    change_in_direct_effect = get_correct_logit_score(diff_in_logits)
+        new_logits = new_logits_after_sample_wrapper(heads, mlp_layers, num_runs, logits)
+        change_in_direct_effect = new_logits - get_correct_logit_score(logits)
     
     #  3) plots the clean direct effect vs accumulated backup
     direct_effects = per_head_direct_effect[layer, head].flatten().cpu() if heads is not None else all_layer_direct_effect[layer].flatten().cpu()
@@ -321,8 +401,19 @@ def create_scatter_of_change_from_component(heads = None, mlp_layers = None, ret
     
     if return_slope:
         return slope
+def get_threshold_from_percent(logits, threshold_percent_filter):
+    logits_flat = logits.flatten()
+    sorted_logits = logits_flat.sort()[0]
+    index = int((1 - threshold_percent_filter) * sorted_logits.size(0))
+    threshold_value = sorted_logits[index]
+    return threshold_value
+def get_top_self_repair_prompts(heads = None, mlp_layers = None, topk = 10, num_runs = 5, logits = logits, logit_diff_self_repair = True, threshold_percent_filter = 1):
+    """
+    if logit_diff_self_repair, Top self repair is calcualted by seeing how little the logits change.
+    if not, it just calculated by whichever prompts, when ablating the component, changes the most positively in logits.
 
-def get_top_self_repair_prompts(heads = None, mlp_layers = None, topk = 10, num_runs = 5, logits = logits):
+    threshold_filter controls for which examples to consider; if not zero, it will only consider examples where the absolute direct effect of the component is at least threshold_filter
+    """
     assert sum([heads is not None, mlp_layers is not None]) == 1
 
     # make sure all heads are in same layer
@@ -330,10 +421,12 @@ def get_top_self_repair_prompts(heads = None, mlp_layers = None, topk = 10, num_
         assert len(set([layer for (layer, head) in heads])) == 1
         layer = heads[0][0]
         head = heads[0][1]
+        direct_effect = per_head_direct_effect[layer, head]
         #print(layer)
     elif mlp_layers is not None:
         # layer is max of all the layers
         layer = max(mlp_layers)
+        direct_effect = all_layer_direct_effect[layer]
     else:
         raise Exception("No heads or mlp layers given")
     
@@ -343,52 +436,139 @@ def get_top_self_repair_prompts(heads = None, mlp_layers = None, topk = 10, num_
     if mlp_layers != None:
         nodes += [Node("mlp_out", layer) for layer in mlp_layers]
 
-    
-    # use many shuffled!
-    diff_in_logits_accumulator = torch.zeros_like(logits)
-    for i in range(num_runs):
-        # Shuffle owt_tokens by batch
-        shuffled_corrupted_owt_tokens = shuffle_owt_tokens_by_batch(corrupted_owt_tokens)
-        # Calculate new_logits using act_patch
-        new_logits = act_patch(model, owt_tokens, nodes, return_item, shuffled_corrupted_owt_tokens, apply_metric_to_cache=False)
-        # Calculate diff_in_logits
-        diff_in_logits = new_logits - logits
-        # Accumulate
-        diff_in_logits_accumulator += diff_in_logits
-
-    diff_in_logits = diff_in_logits_accumulator / num_runs
     # get change in direct effect compared to original
-    change_in_direct_effect = get_correct_logit_score(diff_in_logits)
-    print(change_in_direct_effect.shape)
+    change_in_direct_effect = new_logits_after_sample_wrapper(heads, mlp_layers, num_runs, logits) - get_correct_logit_score(logits)
+    
     # get topk
-    topk_indices = topk_of_Nd_tensor(change_in_direct_effect, k = topk)
+    threshold_filter = get_threshold_from_percent(direct_effect.abs(), threshold_percent_filter)
+    mask_direct_effect: Float[Tensor, "batch pos"] = direct_effect.abs() > threshold_filter
+    
+    if logit_diff_self_repair:
+        # Using masked_select to get the relevant values based on the mask.
+        change_in_direct_effect = change_in_direct_effect.masked_fill(~mask_direct_effect, 99999)
+        topk_indices = topk_of_Nd_tensor(-1 * change_in_direct_effect.abs(), k = topk) # -1 cause we want the minimim change in logits
+    else:
+        change_in_direct_effect = change_in_direct_effect.masked_fill(~mask_direct_effect, -99999)
+        topk_indices = topk_of_Nd_tensor(change_in_direct_effect, k = topk)
     return topk_indices
 
 
+
+
+
+
+
+# %% 
+
+def percent_inductiony_prompts(prompts):
+    """
+    finds out what percentage of prompts is inductiony;
+    prompts should be a tensor of [prompt, 2] where each entry is one of [batch, pos]
+    """
+    count = 0.0
+    for batch, pos in prompts:
+        prev = all_owt_tokens[batch, 0:(pos+1)]
+        actual = all_owt_tokens[batch, (pos+1):(pos + 2)].item()
+
+        # see if actual is in prev
+        if actual in prev:
+            count += 1.0
+        
+            
+
+
+    return count / len(prompts)
+
+
 # %%
+topk = 40
+zldtps = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
+mldtps = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
+for layer in tqdm(range(model.cfg.n_layers)):
+    for head in range(model.cfg.n_heads):
+        zero_logit_diff_top_prompts = get_top_self_repair_prompts(heads = [(layer, head)], topk = topk, logit_diff_self_repair = True, threshold_percent_filter = 0.05, num_runs=5)
+        max_logit_diff_top_prompts = get_top_self_repair_prompts(heads = [(layer, head)], topk = topk, logit_diff_self_repair = False, threshold_percent_filter = 0.05, num_runs=5)
+
+
+        zldtps[layer, head] = percent_inductiony_prompts(zero_logit_diff_top_prompts)#set([(i[0], i[1]) for i in zero_logit_diff_top_prompts])
+        mldtps[layer, head] = percent_inductiony_prompts(max_logit_diff_top_prompts)#set([(i[0], i[1]) for i in max_logit_diff_top_prompts])
+        
+
+# %%
+
+
+
+# %%
+imshow(zldtps, title = f"Percent Inductiony Prompts for topk = {topk} of Zero-Logit-Diff Self Repair in {safe_model_name}", text_auto = True, width = 800, height = 800, range_color=[-1, 1])
+imshow(mldtps, title = f"Percent Inductiony Prompts for topk = {topk} of Max-Logit-Diff Self Repair in {safe_model_name}", text_auto = True, width = 800, height = 800, range_color=[-1, 1])
+
+# %%
+imshow(mldtps - zldtps, title = "diff of smth", text_auto = True, width = 800, height = 800)
+
+
+# %%
+mlp_zldtps = torch.zeros((model.cfg.n_layers))
+mlp_mldtps = torch.zeros((model.cfg.n_layers))
+for layer in tqdm(range(model.cfg.n_layers)):
+    zero_logit_diff_top_prompts = get_top_self_repair_prompts(mlp_layers = [layer], topk = topk, logit_diff_self_repair = True, threshold_percent_filter = 0.05, num_runs=5)    
+    max_logit_diff_top_prompts = get_top_self_repair_prompts(mlp_layers = [layer], topk = topk, logit_diff_self_repair = False, threshold_percent_filter = 0.05, num_runs=5)
+
+    mlp_zldtps[layer] = percent_inductiony_prompts(zero_logit_diff_top_prompts)
+    mlp_mldtps[layer] = percent_inductiony_prompts(max_logit_diff_top_prompts)
+
+# %%
+imshow(mlp_zldtps.unsqueeze(-1), title = f"Percent Inductiony Prompts for topk = {topk} of Zero-Logit-Diff Self Repair in {safe_model_name}", text_auto = True, width = 200, height = 800)
+imshow(mlp_mldtps.unsqueeze(-1), title = f"Percent Inductiony Prompts for topk = {topk} of Max-Logit-Diff Self Repair in {safe_model_name}", text_auto = True, width = 200, height = 800)
+
+# %%
+# 
+#     
+
+
+# %% Find a baseline for the inductiony prompts
+for j in range(12):
+    baseline_prompts = [[i, int(PROMPT_LEN) - j] for i in range(BATCH_SIZE)]
+    print(percent_inductiony_prompts(torch.tensor(baseline_prompts)))
+
+
+# %%
+
 #create_scatter_of_change_from_component(heads = [(9,9)], force_through_origin=False)
+layer = 11
+for i in range(12):
+    head = i
+    create_scatter_of_change_from_component(heads = [(layer, head)], zero_ablate=False, force_through_origin=True, num_runs = 5)
+#
 
-create_scatter_of_change_from_component(heads = [(8,2)], zero_ablate=False, force_through_origin=True, num_runs = 2)
-#create_scatter_of_change_from_component(mlp_layers = [11], zero_ablate=False, force_through_origin=True, num_runs = 10)
+
 # %%
-top_prompts = get_top_self_repair_prompts(heads = [(8,2)], topk = 30)
-for batch, pos, _ in top_prompts:
-    print_tokens(batch, pos, pos + 1)
-    print("\n------ new prompt: ------\n\n")
+layer = 11
+head = 3
+# for heads
+create_scatter_of_change_from_component(heads = [(layer, head)], zero_ablate=False, force_through_origin=True, num_runs = 5)
+zero_logit_diff_top_prompts = get_top_self_repair_prompts(heads = [(layer, head)], topk = topk, logit_diff_self_repair = True, threshold_percent_filter = 0.05, num_runs=5)
+max_logit_diff_top_prompts = get_top_self_repair_prompts(heads = [(layer, head)], topk = topk, logit_diff_self_repair = False, threshold_percent_filter = 0.05, num_runs=5)
 
-
-# %%\
-if in_notebook_mode:
-    #create_scatter_of_backup_of_component(mlp_layers = [10])
-    #create_scatter_of_backup_of_component(heads = [(10,7)])
-    create_scatter_of_backup_of_component(heads = [(8,2)]) # the head in gpt2-small which has insane downstream impact
-    #ablated_de, ablated_layer_de = dir_effects_from_sample_ablating(attention_heads=[(1,8)])
-    #show_batch_result(23, start = 12, end = 13, per_head_direct_effect = (ablated_de - per_head_direct_effect), all_layer_direct_effect = (ablated_layer_de - all_layer_direct_effect))
-    #show_batch_result(23, start = 12, end = 13, per_head_direct_effect = (per_head_direct_effect), all_layer_direct_effect = (all_layer_direct_effect))
-    #utils.test_prompt("""Hannity: GOP's Failure 'Pushed Trump Into Arms of Chuck & Nancy' \n""", "\n", model)
+# for mlp layers
+# create_scatter_of_change_from_component(mlp_layers= [layer], zero_ablate=False, force_through_origin=True, num_runs = 5)
+# zero_logit_diff_top_prompts = get_top_self_repair_prompts(mlp_layers= [layer], topk = topk, logit_diff_self_repair = True, threshold_percent_filter = 0.05, num_runs=5)
+# max_logit_diff_top_prompts = get_top_self_repair_prompts(mlp_layers= [layer], topk = topk, logit_diff_self_repair = False, threshold_percent_filter = 0.05, num_runs=5)
 
 
 
+# %%
+for batch, pos in zero_logit_diff_top_prompts:
+    print(f"\n------ new prompt B{batch}P{pos}: ------   head direct effect = {per_head_direct_effect[layer, head, batch, pos]}\n\n")
+    
+    print_tokens(batch, pos + 1, pos + 2)
+    
+
+# %%
+
+for batch, pos in max_logit_diff_top_prompts:
+    print(f"\n------ new prompt B{batch}P{pos}: ------   head direct effect = {per_head_direct_effect[layer, head, batch, pos]}\n\n")
+    
+    print_tokens(batch, pos + 1, pos + 2)
 
 
 
@@ -408,13 +588,13 @@ if in_notebook_mode:
 
 
 # %% ##Get top examples of self-repair
-off = 6
-tops = topk_of_Nd_tensor(slopes_of_head_backup[off:], k = 10)
+off = 0
+tops = topk_of_Nd_tensor(slopes_of_head_backup[off:], k = 4)
 print(tops)
 
 if True:
     for layer, head in tops:
-        create_scatter_of_change_from_component(heads = [(layer + off, head)], force_through_origin=True, num_runs=2)
+        create_scatter_of_change_from_component(heads = [(layer + off, head)], force_through_origin=True, num_runs=5)
 
 # %%
 # Do the same thing but for MLP layers
@@ -432,8 +612,8 @@ if in_notebook_mode:
 # %%
 
 if in_notebook_mode:
-    layer = 1
-    head = 8
+    layer = 4
+    head = 6
     temp_head_effect, temp_mlp_effect = dir_effects_from_sample_ablating(attention_heads = [(layer, head)])
     show_input(temp_head_effect.mean((-1,-2)) - per_head_direct_effect.mean((-1,-2)), temp_mlp_effect.mean((-1,-2)) - all_layer_direct_effect.mean((-1,-2)),
             title = f"Logit Diff Diff of Downstream Components upon ablation of {layer}.{head}")
@@ -472,16 +652,6 @@ fig.update_traces(xbins=dict(start=-3, end=7, size=0.1))
 
 # Show the plot
 fig.show()
-
-# %%
-means = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
-for layer in range(model.cfg.n_layers):
-    for head in range(model.cfg.n_heads):
-        means[layer, head] = per_head_direct_effect[layer, head].mean()
-
-
-imshow(means)
-
 
 # %%
 
@@ -545,6 +715,55 @@ def get_threholded_de_cre(heads = None, mlp_layers = None, thresholds = [0.5]):
         
     return to_return
 
+
+def get_thresholded_change_in_logits(heads = None, mlp_layers = None, thresholds = [0.5]):
+    """"
+    this function calculates direct effect of component on clean and sample ablation,
+    and then returns an averaged direct effect and compensatory response effect of the component
+    of 'significant' tokens, defined as tokens with a direct effect of at least threshold 
+
+
+    heads: list of tuples of (layer, head) to ablate
+        - all heads need to be in same layer for now
+    """
+
+    # don't accept if more than one input is none
+    assert sum([heads is not None, mlp_layers is not None]) == 1
+
+    # make sure all heads are in same layer
+    if heads is not None:
+        assert len(set([layer for (layer, head) in heads])) == 1
+        layer = heads[0][0]
+        head = heads[0][1]
+        #print(layer)
+    elif mlp_layers is not None:
+        # layer is max of all the layers
+        layer = max(mlp_layers)
+    else:
+        raise Exception("No heads or mlp layers given")
+    
+    nodes = []
+    if heads != None :
+        nodes += [Node("z", layer, head) for (layer,head) in heads]
+    if mlp_layers != None:
+        nodes += [Node("mlp_out", layer) for layer in mlp_layers]
+
+
+    change_in_logits = new_logits_after_sample_wrapper(heads, mlp_layers) - get_correct_logit_score(logits)
+    # 3) filter for indices wherer per_head_direct_effect is greater than threshold
+    to_return = {}
+    for threshold in thresholds:
+        mask_direct_effect: Float[Tensor, "batch pos"] = (per_head_direct_effect[layer, head].abs() > threshold) if heads != None else (all_layer_direct_effect[layer].abs() > threshold)
+        # Using masked_select to get the relevant values based on the mask.
+        selected_cil = change_in_logits.masked_select(mask_direct_effect)
+        selected_de = per_head_direct_effect[layer, head].masked_select(mask_direct_effect) if heads != None else all_layer_direct_effect[layer].masked_select(mask_direct_effect)
+        
+    
+        to_return[f"de_{threshold}"] = selected_de.mean().item()
+        to_return[f"cil_{threshold}"] = selected_cil.mean().item()
+        to_return[f"num_thresholded_{threshold}"] = selected_cil.shape[0]
+        
+    return to_return
 
 
 def plot_thresholded_de_vs_cre(threshold_de, threshold_cre, threshold_count):
@@ -676,7 +895,11 @@ def plot_thresholded_de_vs_cre(threshold_de, threshold_cre, threshold_count):
     fig.write_html(f"threshold_figures/threshold_{safe_model_name}_cre_vs_avg_direct_effect_slider.html")
 
 
-def gpt_new_plot_thresholded_de_vs_cre(threshold_de, threshold_cre, thresholds):
+def gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cre, thresholds, use_logits = False):
+    """
+    create a plot of the self-repair against the direct effect, for various heads and components. if use_logits = True, then we will use
+    th change in logits instead of the compensatory response effect, and threshold_cre should be threshold_cil
+    """
     # Generate a list of (layer, head) tuples for sorting
     layer_head_list = [(l, h) for l in range(model.cfg.n_layers) for h in range(model.cfg.n_heads)]
     x_labels = [f"L{layer}H{head}" for layer in range(model.cfg.n_layers) for head in range(model.cfg.n_heads)]
@@ -702,8 +925,10 @@ def gpt_new_plot_thresholded_de_vs_cre(threshold_de, threshold_cre, thresholds):
                 color=sorted_de.numpy(),  # Color by direct effect
                 colorscale='RdBu',  # Red to Blue scale
                 colorbar=dict(title='Direct Effect', y=10),
+                cmin=-max(abs(sorted_de.numpy())),
+                cmax=max(abs(sorted_de.numpy()))
             ),
-            text=[f"Layer {layer_head_list[i][0]}, Head {layer_head_list[i][1]}" for i in sorted_indices],
+            text=[f"Layer {layer_head_list[i][0]}, Head {layer_head_list[i][1]}: DE = {sorted_de[i]}" for i in sorted_indices],
             visible=visible,
             name=f"Threshold: {threshold}"
         )
@@ -729,8 +954,10 @@ def gpt_new_plot_thresholded_de_vs_cre(threshold_de, threshold_cre, thresholds):
                         color=sorted_de.numpy(),
                         colorscale='RdBu',
                         colorbar=dict(title='Direct Effect', y=10),
+                        cmin=-max(abs(sorted_de.numpy())),
+                        cmax=max(abs(sorted_de.numpy()))
                     ),
-                    text=[f"Layer {layer_head_list[i][0]}, Head {layer_head_list[i][1]}" for i in sorted_indices],
+                    text=[f"Layer {layer_head_list[i][0]}, Head {layer_head_list[i][1]}: DE = {sorted_de[i]}" for i in sorted_indices],
                 )
             ],
             name=str(threshold)
@@ -779,7 +1006,7 @@ def gpt_new_plot_thresholded_de_vs_cre(threshold_de, threshold_cre, thresholds):
 
     fig.update_layout(
         sliders=sliders,
-        title=f"Thresholded Compensatory Response Effect vs Average Direct Effect in {model_name}",
+        title=f"Thresholded Compensatory Response Effect vs Average Direct Effect in {model_name}" if not use_logits else f"Thresholded Change in Output Logits vs Average Direct Effect in {model_name}",
         xaxis_title="Average Direct Effect",
         yaxis_title="Average Compensatory Response Effect",
         hovermode="closest",
@@ -819,26 +1046,42 @@ def gpt_new_plot_thresholded_de_vs_cre(threshold_de, threshold_cre, thresholds):
 
 # %%
 
-thresholds = [0.1 * i for i in range(0,12)]
+# thresholds = [0.1 * i for i in range(0,12)]
 
+# thresholded_de = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
+# thresholded_cre = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
+# thresholded_count = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
+
+# for layer in tqdm(range(model.cfg.n_layers)):
+#     for head in range(model.cfg.n_heads):
+#         dict_results = get_threholded_de_cre(heads = [(layer, head)], thresholds = thresholds)
+#         for i, threshold in enumerate(thresholds):
+#             thresholded_de[i, layer, head] = dict_results[f"de_{threshold}"]
+#             thresholded_cre[i, layer, head] = dict_results[f"cre_{threshold}"]
+#             thresholded_count[i, layer, head] = dict_results[f"num_thresholded_{threshold}"]
+
+
+# %%
+thresholds = [0.1 * i for i in range(0,12)]
 thresholded_de = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
-thresholded_cre = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
+thresholded_cil = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
 thresholded_count = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
+
+
 
 for layer in tqdm(range(model.cfg.n_layers)):
     for head in range(model.cfg.n_heads):
-        dict_results = get_threholded_de_cre(heads = [(layer, head)], thresholds = thresholds)
+        dict_results = get_thresholded_change_in_logits(heads = [(layer, head)], thresholds = thresholds)
         for i, threshold in enumerate(thresholds):
             thresholded_de[i, layer, head] = dict_results[f"de_{threshold}"]
-            thresholded_cre[i, layer, head] = dict_results[f"cre_{threshold}"]
+            thresholded_cil[i, layer, head] = dict_results[f"cil_{threshold}"]
             thresholded_count[i, layer, head] = dict_results[f"num_thresholded_{threshold}"]
 
 
-# %%
 #plot_thresholded_de_vs_cre(thresholded_de, thresholded_cre, thresholded_count)
 
 # %%
-gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cre, thresholds)
+gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cil, thresholds, True)
 
 # %%
 #plot_thresholded_de_vs_cre([-99999999999999999])
@@ -846,52 +1089,6 @@ gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cre, thresholds)
 # %%
 
 
-# RED TEAM EARLIER ESULT
-
-new_logits = act_patch(model, owt_tokens,  [Node("z", 1, 8)], new_input = corrupted_owt_tokens, patching_metric = return_item,)
-new_probs = torch.softmax(new_logits, -1)
-old_probs = torch.softmax(logits, -1)
-# %%
-values_new, indices_new = torch.topk(new_probs[53, 12, :], 5)
-print("Top 5 values of new_logits[53, 12, :]:", values_new)
-print("Top 5 indices of new_logits[53, 12, :]:", indices_new)
-
-
-# For logits
-values, indices = torch.topk(old_probs[53, 12, :], 5)
-print("Top 5 values of logits[53, 12, :]:", values)
-print("Top 5 indices of logits[53, 12, :]:", indices)
-
-# %%
-ablated_1_8_cache = act_patch(model, owt_tokens,  [Node("z", 1, 8)],
-                            return_item, corrupted_owt_tokens, apply_metric_to_cache= True)
-
-
-# %%
-for layer in range(model.cfg.n_layers):
-    print(ablated_1_8_cache[utils.get_act_name("resid_pre", layer)].shape)
-# %%
-
-head_de, mlp_layer_de = collect_direct_effect(ablated_1_8_cache, owt_tokens, display = True, collect_individual_neurons = False)
-# %%
-show_input(head_de[..., 53,12], mlp_layer_de[..., 53,12], title = "Direct Effect of Ablating Head 1.8")
-
-# %%
-show_input(per_head_direct_effect[..., 53,12], all_layer_direct_effect[..., 53,12], title = "Direct Effect of Ablating Head 1.8")
-# %%
-
-token_residual_directions: Float[Tensor, "batch seq_len d_model"] = model.tokens_to_residual_directions(owt_tokens)
-all_layer_output: Float[Tensor, "n_layer batch pos d_model"] = torch.zeros((model.cfg.n_layers, owt_tokens.shape[0], owt_tokens.shape[1], model.cfg.d_model)).cuda()
-for layer in range(model.cfg.n_layers):
-    all_layer_output[layer, ...] = ablated_1_8_cache[f'blocks.{layer}.hook_mlp_out']
-
-
-scaled_residual_stack = ablated_1_8_cache.apply_ln_to_stack(all_layer_output, layer = -1, has_batch_dim = True)
-scaled_residual_stack = scaled_residual_stack[..., :, :-1, :]
-effect_directions = token_residual_directions[:, 1:, :]
-dot_prods = einops.einsum(scaled_residual_stack, effect_directions, "... batch pos d_model, batch pos d_model -> ... batch pos")
-
-dot_prods[-1, 53, 12]
 # %%
 
 
@@ -927,3 +1124,50 @@ dot_prods[-1, 53, 12]
 # for layer in range(12):
 #     if pairs_of_mlp_backup[layer]:
 #         print(layer)
+
+
+# ----------------------------------------------------------------
+
+# # RED TEAM EARLIER ESULT
+
+# new_logits = act_patch(model, owt_tokens,  [Node("z", 1, 8)], new_input = corrupted_owt_tokens, patching_metric = return_item,)
+# new_probs = torch.softmax(new_logits, -1)
+# old_probs = torch.softmax(logits, -1)
+
+# values_new, indices_new = torch.topk(new_probs[53, 12, :], 5)
+# print("Top 5 values of new_logits[53, 12, :]:", values_new)
+# print("Top 5 indices of new_logits[53, 12, :]:", indices_new)
+
+
+# # For logits
+# values, indices = torch.topk(old_probs[53, 12, :], 5)
+# print("Top 5 values of logits[53, 12, :]:", values)
+# print("Top 5 indices of logits[53, 12, :]:", indices)
+
+
+# ablated_1_8_cache = act_patch(model, owt_tokens,  [Node("z", 1, 8)],
+#                             return_item, corrupted_owt_tokens, apply_metric_to_cache= True)
+
+
+# for layer in range(model.cfg.n_layers):
+#     print(ablated_1_8_cache[utils.get_act_name("resid_pre", layer)].shape)
+
+# head_de, mlp_layer_de = collect_direct_effect(ablated_1_8_cache, owt_tokens, display = True, collect_individual_neurons = False)
+# show_input(head_de[..., 53,12], mlp_layer_de[..., 53,12], title = "Direct Effect of Ablating Head 1.8")
+
+
+# show_input(per_head_direct_effect[..., 53,12], all_layer_direct_effect[..., 53,12], title = "Direct Effect of Ablating Head 1.8")
+
+# token_residual_directions: Float[Tensor, "batch seq_len d_model"] = model.tokens_to_residual_directions(owt_tokens)
+# all_layer_output: Float[Tensor, "n_layer batch pos d_model"] = torch.zeros((model.cfg.n_layers, owt_tokens.shape[0], owt_tokens.shape[1], model.cfg.d_model)).cuda()
+# for layer in range(model.cfg.n_layers):
+#     all_layer_output[layer, ...] = ablated_1_8_cache[f'blocks.{layer}.hook_mlp_out']
+
+
+# scaled_residual_stack = ablated_1_8_cache.apply_ln_to_stack(all_layer_output, layer = -1, has_batch_dim = True)
+# scaled_residual_stack = scaled_residual_stack[..., :, :-1, :]
+# effect_directions = token_residual_directions[:, 1:, :]
+# dot_prods = einops.einsum(scaled_residual_stack, effect_directions, "... batch pos d_model, batch pos d_model -> ... batch pos")
+
+# dot_prods[-1, 53, 12]
+# %%
