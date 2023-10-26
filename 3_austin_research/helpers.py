@@ -246,3 +246,325 @@ def get_correct_logit_score(
     smaller_correct = clean_tokens[:, 1:].unsqueeze(-1)
     answer_logits: Float[Tensor, "batch 2"] = smaller_logits.gather(dim=-1, index=smaller_correct)
     return answer_logits.squeeze() # get rid of last index of size one
+
+
+
+def print_tokens(model, all_owt_tokens, batch, start = 40, end = 47):
+    """
+    Prints the tokens for a batch. Shares same indexing.
+    """
+    print(model.to_string(all_owt_tokens[batch, 0:start]))
+    print("...")
+    print(model.to_string(all_owt_tokens[batch, start:end]))
+    # print("...")
+    # print(model.to_string(all_owt_tokens[batch, end:]))
+def change_in_ld_calc(logits, heads = None, mlp_layers = None, num_runs = 5):
+    """
+    runs activation patching over component and returns new avg_correct_logit_score, averaged over num_runs runs
+    this is the average logit of the correct token upon num_runs sample ablations
+    logits just used for size
+    """
+    
+    nodes = []
+    if heads != None :
+        nodes += [Node("z", layer, head) for (layer,head) in heads]
+    if mlp_layers != None:
+        nodes += [Node("mlp_out", layer) for layer in mlp_layers]
+
+    # use many shuffled!
+    logits_accumulator = torch.zeros_like(logits)
+    for i in range(num_runs):
+        # Shuffle owt_tokens by batch
+        shuffled_corrupted_owt_tokens = shuffle_owt_tokens_by_batch(corrupted_owt_tokens)
+        # Calculate new_logits using act_patch
+        new_logits = act_patch(model, owt_tokens, nodes, return_item, shuffled_corrupted_owt_tokens, apply_metric_to_cache=False)
+        logits_accumulator += new_logits
+
+    avg_logits = logits_accumulator / num_runs
+    # get change in direct effect compared to original
+    avg_correct_logit_score = get_correct_logit_score(avg_logits)
+    return avg_correct_logit_score
+def show_batch_result(model, all_owt_tokens, batch,  per_head_direct_effect, all_layer_direct_effect, start = 40, end = 47):
+    """
+    highlights the text selection, along with the mean effect of the range
+    indexed similariy to python, where start is inclusive and end is exclusive 
+
+    recall that the per_head_direct_effect is one length shorter than the input, since it doesn't have the first token
+    so, if the interesting self-repair you are observing seems to be at pos 12, this means it is for the prediction of token 13
+    """
+    
+    print_tokens(model, all_owt_tokens, batch, start, end)
+    show_input(per_head_direct_effect[..., batch, start:end].mean(-1),all_layer_direct_effect[:, batch, start:end].mean(-1), title = f"Direct Effect of Heads on batch {batch}")
+def create_scatter_of_backup_of_component(heads = None, mlp_layers = None, return_slope = False, return_CRE = False):
+    """"
+    this function:
+    1) gets the direct effect of all a component when sample ablating it
+    2) gets the total accumulated backup of the component for each prompt and position
+    3) plots the clean direct effect vs accumulated backup
+
+    heads: list of tuples of (layer, head) to ablate
+        - all heads need to be in same layer for now
+    return_CRE: bad coding practic eto wherei  just return cre if i'm lazy
+    """
+
+    # don't accept if more than one input is none
+    assert sum([heads is not None, mlp_layers is not None]) == 1
+
+    # make sure all heads are in same layer
+    if heads is not None:
+        assert len(set([layer for (layer, head) in heads])) == 1
+        layer = heads[0][0]
+        head = heads[0][1]
+        #print(layer)
+    elif mlp_layers is not None:
+        # layer is max of all the layers
+        layer = max(mlp_layers)
+    else:
+        raise Exception("No heads or mlp layers given")
+    
+    ablated_per_head_batch_direct_effect, mlp_per_layer_direct_effect = dir_effects_from_sample_ablating(attention_heads=heads, mlp_layers=mlp_layers)
+
+    # 2) gets the total accumulated backup of the head for each prompt and position
+    downstream_change_in_logit_diff: Float[Tensor, "layer head batch pos"] = ablated_per_head_batch_direct_effect - per_head_direct_effect
+    downstream_change_in_mlp_logit_diff: Float[Tensor, "layer batch pos"] = mlp_per_layer_direct_effect - all_layer_direct_effect
+    #print(downstream_change_in_logit_diff.shape)
+    #print(downstream_change_in_mlp_logit_diff.shape)
+    
+    if(downstream_change_in_logit_diff[0:layer].sum((0,1,2,3)).item() != 0):
+        print("expect assymetry since different LNs used")
+    if heads is not None:
+        head_backup = downstream_change_in_logit_diff[(layer+1):].sum((0,1))
+        mlp_backup = downstream_change_in_mlp_logit_diff[(layer):].sum(0)
+        total_backup = head_backup + mlp_backup
+    if mlp_layers is not None:
+        head_backup = downstream_change_in_logit_diff[(layer+1):].sum((0,1))
+        mlp_backup = downstream_change_in_mlp_logit_diff[(layer+1):].sum(0)
+        total_backup = head_backup + mlp_backup
+    
+    if return_CRE:
+        return total_backup
+    
+    #  3) plots the clean direct effect vs accumulated backup
+
+    direct_effects = per_head_direct_effect[layer, head].flatten().cpu() if heads is not None else all_layer_direct_effect[layer].flatten().cpu()
+    assert direct_effects.shape == total_backup.flatten().cpu().shape
+    if not return_slope:
+        fig = go.Figure()
+        
+        text_labels = [f"Batch {i[0]}, Pos {i[1]}: {model.to_string(all_owt_tokens[i[0], i[1]:(i[1] + 1)])} --> {model.to_string(all_owt_tokens[i[0], (i[1] + 1):(i[1] + 2)])}" for i in itertools.product(range(BATCH_SIZE), range(PROMPT_LEN - 1))]
+
+        scatter_plot = go.Scatter(
+            x = direct_effects,
+            y = total_backup.flatten().cpu(),
+            text=text_labels,  # Set the hover labels to the text attribute
+            mode='markers',
+            marker=dict(size=2, opacity=0.8),
+            name = "Compensatory Response Size"
+        )
+        fig.add_trace(scatter_plot)
+
+        second_scatter = go.Scatter(
+            x = direct_effects,
+            y = head_backup.flatten().cpu() ,
+            text=text_labels,  # Set the hover labels to the text attribute
+            mode='markers',
+            marker=dict(size=2, opacity=0.8),
+            name = "Response Size of just Attention Blocks"
+        )
+        fig.add_trace(second_scatter)
+
+        third_scatter = go.Scatter(
+            x = direct_effects,
+            y = mlp_backup.flatten().cpu() ,
+            text=text_labels, # Set the hover labels to the text attribute
+            mode='markers',
+            marker=dict(size=2, opacity=0.8),
+            name = "Response Size of just MLP Blocks"
+        )
+        fig.add_trace(third_scatter)
+
+
+    # get a best fit line
+   
+    slope, intercept = np.linalg.lstsq(np.vstack([direct_effects, np.ones(len(direct_effects))]).T, total_backup.flatten().cpu(), rcond=None)[0]
+
+    if not return_slope:
+        max_x = max(direct_effects)
+
+        # add line of best fit
+        fig.add_trace(go.Scatter(
+            x=torch.linspace(-1 * max_x,max_x,100),
+            y=torch.linspace(-1 * max_x,max_x,100) * slope + intercept,
+            mode='lines',
+            name='lines'
+        ))
+
+        component = heads if heads is not None else mlp_layers
+        fig.update_layout(
+            title=f"Total Accumulated Backup of {component} in {model_name} for each Position and Batch" if heads is not None 
+            else f"Total Accumulated Backup of MLP Layer {component} in {model_name} for each Position and Batch",
+        )
+        fig.update_xaxes(title = f"Direct Effect of Head {heads[0]}" if heads is not None else f"Direct Effect of MLP Layer {mlp_layers[0]}")
+        fig.update_yaxes(title = "Total Accumulated Backup")
+        fig.update_layout(width=900, height=500)
+        fig.show()
+    
+    if return_slope:
+        return slope  
+def shuffle_owt_tokens_by_batch(owt_tokens):
+    batch_size, num_tokens = owt_tokens.shape
+    shuffled_owt_tokens = torch.zeros_like(owt_tokens)
+    
+    for i in range(batch_size):
+        perm = torch.randperm(num_tokens)
+        shuffled_owt_tokens[i] = owt_tokens[i, perm]
+        
+    return shuffled_owt_tokens
+def create_scatter_of_change_from_component(model, logits, owt_tokens, new_logits_after_sample_wrapper, per_head_direct_effect, all_layer_direct_effect, all_owt_tokens, heads = None, mlp_layers = None, return_slope = False, zero_ablate = False, force_through_origin = False, num_runs = 1):
+    """"
+    this function:
+    1) gets the direct effect of all a component when sample ablating it
+    2) gets the CHANGE IN LOGIT CONTRIBUTION for each prompt and position
+    3) plots the clean direct effect vs accumulated backup
+
+    heads: list of tuples of (layer, head) to ablate
+        - all heads need to be in same layer for now
+    force_through_origin: if true, will force the line of best fit to go through the origin
+    """
+
+    # don't accept if more than one input is none
+    assert sum([heads is not None, mlp_layers is not None]) == 1
+
+    # make sure all heads are in same layer
+    if heads is not None:
+        assert len(set([layer for (layer, head) in heads])) == 1
+        layer = heads[0][0]
+        head = heads[0][1]
+        #print(layer)
+    elif mlp_layers is not None:
+        # layer is max of all the layers
+        layer = max(mlp_layers)
+    else:
+        raise Exception("No heads or mlp layers given")
+    
+    
+    nodes = []
+    if heads != None :
+        nodes += [Node("z", layer, head) for (layer,head) in heads]
+    if mlp_layers != None:
+        nodes += [Node("mlp_out", layer) for layer in mlp_layers]
+
+    if zero_ablate:
+        new_logits = act_patch(model, owt_tokens, nodes, return_item, new_cache="zero", apply_metric_to_cache= False)
+        diff_in_logits = new_logits - logits
+        change_in_direct_effect = get_correct_logit_score(diff_in_logits)
+    else:
+        new_logits = new_logits_after_sample_wrapper(heads, mlp_layers, num_runs, logits)
+        change_in_direct_effect = new_logits - get_correct_logit_score(logits)
+    
+    #  3) plots the clean direct effect vs accumulated backup
+    direct_effects = per_head_direct_effect[layer, head].flatten().cpu() if heads is not None else all_layer_direct_effect[layer].flatten().cpu()
+    assert direct_effects.shape == change_in_direct_effect.flatten().cpu().shape
+
+    # get a best fit line
+    if force_through_origin:
+        slope = np.linalg.lstsq(direct_effects.reshape(-1, 1), change_in_direct_effect.flatten().cpu(), rcond=None)[0][0]
+        intercept = 0
+    else:
+        slope, intercept = np.linalg.lstsq(np.vstack([direct_effects, np.ones(len(direct_effects))]).T, change_in_direct_effect.flatten().cpu(), rcond=None)[0]
+    
+    if not return_slope:
+        fig = go.Figure()
+        text_labels = [f"Batch {i[0]}, Pos {i[1]}: {model.to_string(all_owt_tokens[i[0], i[1]:(i[1] + 1)])} --> {model.to_string(all_owt_tokens[i[0], (i[1] + 1):(i[1] + 2)])}" for i in itertools.product(range(BATCH_SIZE), range(PROMPT_LEN - 1))]
+
+
+        scatter_plot = go.Scatter(
+            x = direct_effects,
+            y = change_in_direct_effect.flatten().cpu(),
+            text=text_labels,  # Set the hover labels to the text attribute
+            mode='markers',
+            marker=dict(size=2, opacity=0.8),
+            name = "Change in Final Logits vs Direct Effect"
+        )
+        fig.add_trace(scatter_plot)
+        max_x = max(direct_effects.abs())
+
+        # add line of best fit
+        fig.add_trace(go.Scatter(
+            x=torch.linspace(-1 * max_x,max_x,100),
+            y=torch.linspace(-1 * max_x,max_x,100) * slope + intercept,
+            mode='lines',
+            name='lines'
+        ))
+
+        # add dashed y=-x line
+        fig.add_trace(go.Scatter(
+            x=torch.linspace(-1 * max_x,max_x,100),
+            y=torch.linspace(-1 * max_x,max_x,100) * -1,
+            mode='lines',
+            name='y = -x',
+            line = dict(dash = 'dash')
+        ))
+
+        component = heads if heads is not None else mlp_layers
+        fig.update_layout(
+            title=f"Change in Final Logits vs Direct Effect for {component} in {model_name} for each Position and Batch. zero_ablate = {zero_ablate}" if heads is not None 
+            else f"Change in Final Logits vs Direct Effect for MLP Layer {component} in {model_name} for each Position and Batch. zero_ablate = {zero_ablate}",
+        )
+        fig.update_xaxes(title = f"Direct Effect of Head {heads[0]}" if heads is not None else f"Direct Effect of MLP Layer {mlp_layers[0]}")
+        fig.update_yaxes(title = "Change in Final Logits")
+        fig.update_layout(width=900, height=500)
+        fig.show()
+    
+    if return_slope:
+        return slope
+def get_threshold_from_percent(logits, threshold_percent_filter):
+    logits_flat = logits.flatten()
+    sorted_logits = logits_flat.sort()[0]
+    index = int((1 - threshold_percent_filter) * sorted_logits.size(0))
+    threshold_value = sorted_logits[index]
+    return threshold_value
+def get_top_self_repair_prompts(logits, heads = None, mlp_layers = None, topk = 10, num_runs = 5, logit_diff_self_repair = True, threshold_percent_filter = 1):
+    """
+    if logit_diff_self_repair, Top self repair is calcualted by seeing how little the logits change.
+    if not, it just calculated by whichever prompts, when ablating the component, changes the most positively in logits.
+
+    threshold_filter controls for which examples to consider; if not zero, it will only consider examples where the absolute direct effect of the component is at least threshold_filter
+    """
+    assert sum([heads is not None, mlp_layers is not None]) == 1
+
+    # make sure all heads are in same layer
+    if heads is not None:
+        assert len(set([layer for (layer, head) in heads])) == 1
+        layer = heads[0][0]
+        head = heads[0][1]
+        direct_effect = per_head_direct_effect[layer, head]
+        #print(layer)
+    elif mlp_layers is not None:
+        # layer is max of all the layers
+        layer = max(mlp_layers)
+        direct_effect = all_layer_direct_effect[layer]
+    else:
+        raise Exception("No heads or mlp layers given")
+    
+    nodes = []
+    if heads != None :
+        nodes += [Node("z", layer, head) for (layer,head) in heads]
+    if mlp_layers != None:
+        nodes += [Node("mlp_out", layer) for layer in mlp_layers]
+
+    # get change in direct effect compared to original
+    change_in_direct_effect = new_logits_after_sample_wrapper(heads, mlp_layers, num_runs, logits) - get_correct_logit_score(logits)
+    
+    # get topk
+    threshold_filter = get_threshold_from_percent(direct_effect.abs(), threshold_percent_filter)
+    mask_direct_effect: Float[Tensor, "batch pos"] = direct_effect.abs() > threshold_filter
+    
+    if logit_diff_self_repair:
+        # Using masked_select to get the relevant values based on the mask.
+        change_in_direct_effect = change_in_direct_effect.masked_fill(~mask_direct_effect, 99999)
+        topk_indices = topk_of_Nd_tensor(-1 * change_in_direct_effect.abs(), k = topk) # -1 cause we want the minimim change in logits
+    else:
+        change_in_direct_effect = change_in_direct_effect.masked_fill(~mask_direct_effect, -99999)
+        topk_indices = topk_of_Nd_tensor(change_in_direct_effect, k = topk)
+    return topk_indices
