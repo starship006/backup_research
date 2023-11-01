@@ -274,38 +274,51 @@ def train_tons_of_classifiers(rank, world_size):
     #dist.init_process_group("gloo", rank=rank, world_size=world_size)
     #dpp_model = DPP(model, device_ids = [rank])
     
-    ablate_by_read_classifier_accuracy = torch.zeros((model.cfg.n_layers, model.cfg.n_layers))
+    ablate_by_read_classifier_accuracy = torch.zeros((model.cfg.n_layers, model.cfg.n_layers * 2))
     for ablate_layer in range(model.cfg.n_layers):
         for read_layer in range(ablate_layer, model.cfg.n_layers):
-            print("Ablating layer ", ablate_layer, " and reading layer ", read_layer)
-            detail = f"ablate_{ablate_layer}_read_{read_layer}"
-            input_dim = model.cfg.d_model
-            num_heads = model.cfg.n_heads
-            hidden_dims = [400, 100]
-            device = 'cuda'  # Replace this with your actual device
+            for i, place in enumerate(["resid_mid", "resid_post"]):
+                print("Ablating layer ", ablate_layer, " and reading layer ", read_layer, " ", place)
+                detail = f"ablate_{ablate_layer}_read_{read_layer}_{place}"
+                input_dim = model.cfg.d_model
+                num_heads = model.cfg.n_heads
+                hidden_dims = [400, 100]
+                device = 'cuda'  # Replace this with your actual device
 
-            classifier = load_classifier_weights("MLPClassifier", input_dim, num_heads, hidden_dims, device, detail)
+                classifier = load_classifier_weights("LinearClassifier", input_dim, num_heads, hidden_dims, device, detail)
 
-            # put the classifier on the GPU
-            
+                # put the classifier on the GPU
+                
 
-            dataset_func = partial(generate_isolated_vectors, layer_to_ablate = ablate_layer, act_to_read = utils.get_act_name("resid_post", read_layer) ,zero_ablate=False)
-
-
-            accuracies = train_classifier_on_ablation(model, classifier, dataset_func, learning_rate=0.01, BATCH_SIZE = 10, PROMPT_LEN=50)
-            
-            # get average of last 5 accuracies
-            ablate_by_read_classifier_accuracy[ablate_layer, read_layer] = sum(accuracies[-5:]) / 5
-            torch.cuda.empty_cache()
-            save_classifier_weights(classifier, "MLPClassifier", detail)
+                dataset_func = partial(generate_isolated_vectors, act_to_read = utils.get_act_name("resid_post", read_layer) ,zero_ablate=False)
 
 
-    print(ablate_by_read_classifier_accuracy)
-    fig = imshow(ablate_by_read_classifier_accuracy, title = f"Accuracy of classifiers predicting ablated heads in {model_name}",
-       text_auto = True, width = 800, height = 800, return_fig=True)
+                accuracies = train_classifier_on_ablation(model, classifier, dataset_func, learning_rate=0.01, BATCH_SIZE = 10, PROMPT_LEN=50)
+                
+                # get average of last 5 accuracies
+                ablate_by_read_classifier_accuracy[ablate_layer, read_layer * 2 + i] = sum(accuracies[-5:]) / 5
+                torch.cuda.empty_cache()
+                save_classifier_weights(classifier, "LinearClassifier", detail)
 
-    # save figure to html
-    fig.write_html(f"threshold_figures/{safe_model_name}_ablate_by_read_classifier_accuracy.html")
+    return ablate_by_read_classifier_accuracy
+# %%
+
+#ablate_by_read_classifier_accuracy = torch.zeros((model.cfg.n_layers, model.cfg.n_layers * 2))
+ablate_by_read_classifier_accuracy = train_tons_of_classifiers(0, 1)
+print(ablate_by_read_classifier_accuracy)
+x_labels = [j + "_" + str(i) for i in range(model.cfg.n_layers) for j in ["resid_mid", "resid_post"]]
+
+fig = imshow(ablate_by_read_classifier_accuracy, title = f"Accuracy of classifiers predicting ablated heads in {model_name}",
+    text_auto = True, width = 800, height = 800, x = x_labels,return_fig=True)
+fig.update_xaxes(title = "Layer Read From")
+fig.update_yaxes(title = "Layer Ablated")
+# save figure to html
+#fig.show()
+
+
+# %%
+fig.write_html(f"threshold_figures/{safe_model_name}_LINEAR_ablate_by_read_classifier_accuracy.html")
+
 # %%
 
 # run single GPU of train_tons_of_classifiers
@@ -316,7 +329,7 @@ def train_tons_of_classifiers(rank, world_size):
 # if __name__ == '__main__':
 #     world_size = 4
 #     torch.multiprocessing.spawn(train_tons_of_classifiers, args=(world_size,), nprocs=world_size, join=True)
-train_tons_of_classifiers(0, 1)
+
 
 
 # %%
