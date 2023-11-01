@@ -194,7 +194,8 @@ def collect_direct_effect(de_cache: ActivationCache = None, correct_tokens: Floa
 
 
 @to_partial
-def dir_effects_from_sample_ablating(model = None, clean_tokens: Float[Tensor, "batch seq_len"] = None, corrupted_tokens: Float[Tensor, "batch seq_len"] = None, attention_heads = None, mlp_layers = None, neurons = None, return_cache = False) -> Union[ActivationCache, Tuple[Float[Tensor, "heads batch pos_minus_one"], Float[Tensor, "n_layer batch pos_minus_one"]]]:
+def dir_effects_from_sample_ablating(model = None, clean_tokens: Float[Tensor, "batch seq_len"] = None, corrupted_tokens: Float[Tensor, "batch seq_len"] = None, attention_heads = None,
+ mlp_layers = None, neurons = None, return_cache = False, zero_ablate = False) -> Union[ActivationCache, Tuple[Float[Tensor, "heads batch pos_minus_one"], Float[Tensor, "n_layer batch pos_minus_one"]]]:
     """this function gets the new direct effect of all the heads when sample ablating a component
     it uses the global cache, owt_tokens, corrupted_owt_tokens
 
@@ -203,6 +204,7 @@ def dir_effects_from_sample_ablating(model = None, clean_tokens: Float[Tensor, "
     mlp_layers: list of layers to ablate
     neurons: list of tuples of (layer, neuron) to ablate
     return_cache: whether to return the cache as well as the direct effect
+    zero_ablate: whether to zero ablate instead of sample ablating
     """
 
     if model is None or clean_tokens is None or corrupted_tokens is None:
@@ -211,18 +213,31 @@ def dir_effects_from_sample_ablating(model = None, clean_tokens: Float[Tensor, "
     # don't accept if more than one input is none
     assert sum([attention_heads is not None, mlp_layers is not None, neurons is not None]) == 1
     
-    if attention_heads is not None:
-        new_cache: ActivationCache = act_patch(model, clean_tokens, [Node("z", layer, head) for (layer,head) in attention_heads],
-                            return_item, corrupted_tokens, apply_metric_to_cache= True)
-    elif mlp_layers is not None:
-        new_cache: ActivationCache = act_patch(model, clean_tokens, [Node("mlp_out", layer) for layer in mlp_layers],
-                            return_item, corrupted_tokens, apply_metric_to_cache= True)
-    elif neurons is not None:
-        new_cache: ActivationCache = act_patch(model, clean_tokens, [Node("post", layer = layer, neuron = neuron) for (layer,neuron) in neurons],
-                            return_item, corrupted_tokens, apply_metric_to_cache= True)
+
+    if zero_ablate:
+        if attention_heads is not None:
+            new_cache: ActivationCache = act_patch(model, clean_tokens, [Node("z", layer, head) for (layer,head) in attention_heads],
+                                return_item, new_cache = "zero", apply_metric_to_cache= True)
+        elif mlp_layers is not None:
+            new_cache: ActivationCache = act_patch(model, clean_tokens, [Node("mlp_out", layer) for layer in mlp_layers],
+                                return_item, new_cache = "zero", apply_metric_to_cache= True)
+        elif neurons is not None:
+            new_cache: ActivationCache = act_patch(model, clean_tokens, [Node("post", layer = layer, neuron = neuron) for (layer,neuron) in neurons],
+                                return_item, new_cache = "zero", apply_metric_to_cache= True)
+        else:
+            raise ValueError("Must specify attention_heads, mlp_layers, or neurons")
     else:
-        raise ValueError("Must specify attention_heads, mlp_layers, or neurons")
-        
+        if attention_heads is not None:
+            new_cache: ActivationCache = act_patch(model, clean_tokens, [Node("z", layer, head) for (layer,head) in attention_heads],
+                                return_item, corrupted_tokens, apply_metric_to_cache= True)
+        elif mlp_layers is not None:
+            new_cache: ActivationCache = act_patch(model, clean_tokens, [Node("mlp_out", layer) for layer in mlp_layers],
+                                return_item, corrupted_tokens, apply_metric_to_cache= True)
+        elif neurons is not None:
+            new_cache: ActivationCache = act_patch(model, clean_tokens, [Node("post", layer = layer, neuron = neuron) for (layer,neuron) in neurons],
+                                return_item, corrupted_tokens, apply_metric_to_cache= True)
+        else:
+            raise ValueError("Must specify attention_heads, mlp_layers, or neurons")
 
     head_direct_effect, mlp_layer_direct_effect = collect_direct_effect(new_cache, clean_tokens, model, display = False, collect_individual_neurons = False)
                                             

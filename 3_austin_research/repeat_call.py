@@ -3,13 +3,20 @@
 import subprocess
 
 model_names = [
+    "gpt2-small",
     "gpt2-medium",
-    "EleutherAI/pythia-14m",
-    "EleutherAI/pythia-31m",
-    "EleutherAI/pythia-70m",
-    "roneneldan/TinyStories-33M",
+    "opt-125m",
+    "gpt-neo-125M",
+    "pythia-160m",
+    "stanford-gpt2-small-a",
+    "stanford-gpt2-medium-a",
+    "pythia-410m",
+    "solu-12l-pile",
+    "bert-base-cased",
+    
+
     #"NeelNanda/SoLU_12L1536W_C4_Code",
 ]
 
 for model_name in model_names:
-    subprocess.run(["python", "overview_self_repair.py", "--model_name=" + model_name])
+    subprocess.run(["python", "self-repair-detection.py", "--model_name=" + model_name])
