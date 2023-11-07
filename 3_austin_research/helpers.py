@@ -250,19 +250,23 @@ def dir_effects_from_sample_ablating(model = None, clean_tokens: Float[Tensor, "
 @to_partial
 def get_correct_logit_score(
     logits: Float[Tensor, "batch seq d_vocab"],
-    clean_tokens: Float[Tensor, "batch 1"] = None,
+    clean_tokens: Float[Tensor, "batch seq"] = None,
 ):
     '''
     Returns logit difference between the correct and incorrect answer.
 
     If per_prompt=True, return the array of differences rather than the average.
+    TESTED
     '''
     smaller_logits = logits[:, :-1, :]
     smaller_correct = clean_tokens[:, 1:].unsqueeze(-1)
     answer_logits: Float[Tensor, "batch 2"] = smaller_logits.gather(dim=-1, index=smaller_correct)
     return answer_logits.squeeze() # get rid of last index of size one
 
-
+# test with this
+# a = torch.tensor([[[0,1,2,3,4], [10,11,12,13,14], [100,101,120,103,140]], 
+#                   [[10,999,2,3,4], [110,191,120,13,14], [1100,105,120,103,140]]])
+# get_correct_logit_score(a, clean_tokens = torch.tensor([[3, 2, 4], [0,1,2]]))
 
 def print_tokens(model, all_owt_tokens, batch, start = 40, end = 47):
     """

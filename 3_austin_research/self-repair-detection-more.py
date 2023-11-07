@@ -274,10 +274,10 @@ def train_tons_of_classifiers(rank, world_size):
     #dist.init_process_group("gloo", rank=rank, world_size=world_size)
     #dpp_model = DPP(model, device_ids = [rank])
     
-    ablate_by_read_classifier_accuracy = torch.zeros((model.cfg.n_layers, model.cfg.n_layers * 2))
+    ablate_by_read_classifier_accuracy = torch.zeros((model.cfg.n_layers, model.cfg.n_layers))
     for ablate_layer in range(model.cfg.n_layers):
         for read_layer in range(ablate_layer, model.cfg.n_layers):
-            for i, place in enumerate(["resid_mid", "resid_post"]):
+            for i, place in enumerate(["resid_post"]):
                 print("Ablating layer ", ablate_layer, " and reading layer ", read_layer, " ", place)
                 detail = f"ablate_{ablate_layer}_read_{read_layer}_{place}"
                 input_dim = model.cfg.d_model
@@ -290,13 +290,11 @@ def train_tons_of_classifiers(rank, world_size):
                 # put the classifier on the GPU
                 
 
-                dataset_func = partial(generate_isolated_vectors, act_to_read = utils.get_act_name("resid_post", read_layer) ,zero_ablate=False)
-
-
+                dataset_func = partial(generate_isolated_vectors, layer_to_ablate = ablate_layer ,act_to_read = utils.get_act_name(place, read_layer) ,zero_ablate=False)
                 accuracies = train_classifier_on_ablation(model, classifier, dataset_func, learning_rate=0.01, BATCH_SIZE = 10, PROMPT_LEN=50)
                 
                 # get average of last 5 accuracies
-                ablate_by_read_classifier_accuracy[ablate_layer, read_layer * 2 + i] = sum(accuracies[-5:]) / 5
+                ablate_by_read_classifier_accuracy[ablate_layer, read_layer] = sum(accuracies[-5:]) / 5
                 torch.cuda.empty_cache()
                 save_classifier_weights(classifier, "LinearClassifier", detail)
 
@@ -306,7 +304,7 @@ def train_tons_of_classifiers(rank, world_size):
 #ablate_by_read_classifier_accuracy = torch.zeros((model.cfg.n_layers, model.cfg.n_layers * 2))
 ablate_by_read_classifier_accuracy = train_tons_of_classifiers(0, 1)
 print(ablate_by_read_classifier_accuracy)
-x_labels = [j + "_" + str(i) for i in range(model.cfg.n_layers) for j in ["resid_mid", "resid_post"]]
+x_labels = [j + "_" + str(i) for i in range(model.cfg.n_layers) for j in ["resid_post"]]
 
 fig = imshow(ablate_by_read_classifier_accuracy, title = f"Accuracy of classifiers predicting ablated heads in {model_name}",
     text_auto = True, width = 800, height = 800, x = x_labels,return_fig=True)

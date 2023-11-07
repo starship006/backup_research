@@ -6,7 +6,7 @@ from helpers import return_partial_functions, return_item, topk_of_Nd_tensor, re
 # %%
 in_notebook_mode = True
 if in_notebook_mode:
-    model_name = "gpt2-medium"
+    model_name = "pythia-160m"
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
@@ -92,9 +92,11 @@ def print_tokens(batch, start = 40, end = 47):
     """
     Prints the tokens for a batch. Shares same indexing.
     """
+    print("Tokens before:")
     print(model.to_string(all_owt_tokens[batch, 0:start]))
-    print("...")
-    print(model.to_string(all_owt_tokens[batch, start:end]))
+    print("Start token == " , model.to_string(all_owt_tokens[batch, start]))
+    print("Tokens after:")
+    print(model.to_string(all_owt_tokens[batch, start + 1:end]))
     # print("...")
     # print(model.to_string(all_owt_tokens[batch, end:]))
 
@@ -158,10 +160,6 @@ def new_logits_after_sample_wrapper(heads=None, mlp_layers=None, num_runs=5, log
         
     return result
 
-
-
-
-
 def show_batch_result(batch, start = 40, end = 47, per_head_direct_effect = per_head_direct_effect, all_layer_direct_effect = all_layer_direct_effect):
     """
     highlights the text selection, along with the mean effect of the range
@@ -173,8 +171,6 @@ def show_batch_result(batch, start = 40, end = 47, per_head_direct_effect = per_
     
     print_tokens(start, end)
     show_input(per_head_direct_effect[..., batch, start:end].mean(-1),all_layer_direct_effect[:, batch, start:end].mean(-1), title = f"Direct Effect of Heads on batch {batch}")
-
-
 
 def create_scatter_of_backup_of_component(heads = None, mlp_layers = None, return_slope = False, return_CRE = False):
     """"
@@ -542,8 +538,8 @@ for i in range(12):
 
 
 # %%
-layer = 11
-head = 3
+layer = 1
+head = 8
 # for heads
 create_scatter_of_change_from_component(heads = [(layer, head)], zero_ablate=False, force_through_origin=True, num_runs = 5)
 zero_logit_diff_top_prompts = get_top_self_repair_prompts(heads = [(layer, head)], topk = topk, logit_diff_self_repair = True, threshold_percent_filter = 0.05, num_runs=5)
@@ -568,7 +564,7 @@ for batch, pos in zero_logit_diff_top_prompts:
 for batch, pos in max_logit_diff_top_prompts:
     print(f"\n------ new prompt B{batch}P{pos}: ------   head direct effect = {per_head_direct_effect[layer, head, batch, pos]}\n\n")
     
-    print_tokens(batch, pos + 1, pos + 2)
+    print_tokens(batch, pos, pos + 4)
 
 
 
