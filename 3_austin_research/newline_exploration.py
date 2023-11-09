@@ -160,9 +160,65 @@ def print_tokens(batch: int, start: int = 40, end: int = 47):
 
 @jaxtyped
 @typechecker
+def zero_ablation_hook(
+    attn_result: Union[Float[Tensor, "batch seq n_heads d_model"], Float[Tensor, "batch seq d_model"]],
+    hook: HookPoint,
+    head_index_to_ablate: int = -1000,
+) -> Union[Float[Tensor, "batch seq n_heads d_model"], Float[Tensor, "batch seq d_model"]]:
+    """
+    zero ablates a head or mlp layer across all batch x positions
+    """
+
+    if len(attn_result.shape) == 3:
+        attn_result[:] = torch.zeros(attn_result.shape)
+    else:
+        # attention head
+        attn_result[:, :, head_index_to_ablate, :] = torch.zeros(attn_result[:, :, head_index_to_ablate, :].shape)
+    return attn_result
+
+def replace_ln(
+    current_ln_scaling: Float[Tensor, "batch seq 1"],
+    hook: HookPoint,
+    hook_ln_scaling: Float[Tensor, "batch seq 1"]
+):
+    """
+    replaces the scaling of the layer norm with new_ln_scaling
+    """
+    current_ln_scaling[:] = hook_ln_scaling
+    return hook_ln_scaling
+
+@jaxtyped
+@typechecker
+def one_component_zero_ablate(
+                    clean_tokens,
+                    clean_cache: ActivationCache,
+                    ablate_final_ln: bool = True,
+                    attention_head: Tuple[int, int] = None,
+                    mlp_layer: int = None,
+                    ) -> Float[Tensor, "batch pos d_vocab"] : 
+    """
+    temp ablation function to test if the thing with activation patching is just layernorm being frozen or not
+    pass in an attention head in the last layer
+    """
+    model.reset_hooks()
+    
+
+    if attention_head != None:
+        model.add_hook(utils.get_act_name("z", attention_head[0]), partial(zero_ablation_hook, head_index_to_ablate = attention_head[1]))
+    if mlp_layer != None:
+        model.add_hook(utils.get_act_name("mlp_out", mlp_layer),zero_ablation_hook)
+    model.add_hook(f'ln_final.hook_scale', partial(replace_ln, hook_ln_scaling = clean_cache[f'ln_final.hook_scale']))
+
+    logits, _ = model.run_with_cache(clean_tokens)
+
+    return logits
+
+@jaxtyped
+@typechecker
 def sample_ablate_new_logits_calc(heads: Union[List[Tuple[int, int]], None] = None,
                                   mlp_layers: Union[List[int], None] = None,
-                                  num_runs: int = 5, logits: Float[Tensor, "batch pos d_vocab"] = logits) -> torch.Tensor:
+                                  num_runs: int = 5, logits: Float[Tensor, "batch pos d_vocab"] = logits,
+                                  freeze_final_ln = False) -> torch.Tensor:
     """
     runs activation patching over component and returns new avg_correct_logit_score, averaged over num_runs runs
     this is the average logit of the correct token upon num_runs sample ablations
@@ -182,7 +238,10 @@ def sample_ablate_new_logits_calc(heads: Union[List[Tuple[int, int]], None] = No
         # Shuffle clean_tokens by batch
         shuffled_corrupted_tokens = shuffle_owt_tokens_by_batch(corrupted_tokens)
         # Calculate new_logits using act_patch
-        new_logits = act_patch(model, clean_tokens, nodes, return_item, shuffled_corrupted_tokens, apply_metric_to_cache=False)
+        if freeze_final_ln:
+            pass
+        else:
+            new_logits = act_patch(model, clean_tokens, nodes, return_item, shuffled_corrupted_tokens, apply_metric_to_cache=False)
         logits_accumulator += new_logits
 
     avg_logits = logits_accumulator / num_runs
@@ -197,7 +256,8 @@ def sample_ablate_new_logits_calc(heads: Union[List[Tuple[int, int]], None] = No
 def ablation_new_logits_wrapper(heads: Union[List[Tuple[int, int]], None] = None,
                                   mlp_layers: Union[List[int], None] = None,
                                   num_runs: int = 5, logits: Float[Tensor, "batch pos d_vocab"] = logits,
-                                  ablation_type: str = "sample"):
+                                  ablation_type: str = "sample",
+                                  freeze_final_ln = False) -> torch.Tensor:
     if num_runs != 5:
         print("WARNING: num_runs != 5")
     if heads is not None:
@@ -226,7 +286,16 @@ def ablation_new_logits_wrapper(heads: Union[List[Tuple[int, int]], None] = None
             nodes += [Node("z", layer, head) for (layer,head) in heads]
         if mlp_layers != None:
             nodes += [Node("mlp_out", layer) for layer in mlp_layers]
-        result = act_patch(model, clean_tokens, nodes, return_item, new_cache="zero", apply_metric_to_cache= False)        
+
+        if freeze_final_ln:
+            if (heads != None and len(heads) > 1) or (mlp_layers != None and len(mlp_layers) > 1):
+                raise Exception("Can't freeze final ln with more than one head/mlp (change the code if you want to)")
+            if heads != None:
+                result = one_component_zero_ablate(clean_tokens, cache, attention_head=heads[0])
+            elif mlp_layers != None:
+                result = one_component_zero_ablate(clean_tokens, cache, mlp_layer = mlp_layers[0])
+        else:
+            result = act_patch(model, clean_tokens, nodes, return_item, new_cache="zero", apply_metric_to_cache= False)        
     else:
         raise Exception("ablation_type not recognized")
     
@@ -265,7 +334,8 @@ def shuffle_owt_tokens_by_batch(clean_tokens):
     shuffled = clean_tokens[perm].clone()
     return shuffled
 
-def create_scatter_of_change_from_component(heads = None, mlp_layers = None, return_slope = False, zero_ablate = False, force_through_origin = False, num_runs = 1, logits = logits, focus_on_newline_to_newline = False):
+def create_scatter_of_change_from_component(heads = None, mlp_layers = None, return_slope = False, zero_ablate = False, force_through_origin = False, num_runs = 1, logits = logits, focus_on_newline_to_newline = False, 
+                                            freeze_final_ln = False):
     """"
     this function:
     1) gets the direct effect of all a component when sample ablating it
@@ -295,7 +365,8 @@ def create_scatter_of_change_from_component(heads = None, mlp_layers = None, ret
 
     
     new_logits = ablation_new_logits_wrapper(heads, mlp_layers, num_runs, logits, 
-                                             ablation_type= "zero" if zero_ablate else "sample")
+                                             ablation_type= "zero" if zero_ablate else "sample",
+                                             freeze_final_ln = freeze_final_ln)
 
     
     assert new_logits.shape == logits.shape
@@ -430,7 +501,7 @@ def get_top_self_repair_prompts(heads = None, mlp_layers = None, topk = 10, num_
         topk_indices = topk_of_Nd_tensor(change_in_direct_effect, k = topk)
     return topk_indices
 
-def get_cde_each_head(target_pos = None, ablate_type = "sample"):
+def get_cde_each_head(target_pos = None, ablate_type = "sample", freeze_final_ln = False):
     """
     returns a tensor of shape (n_layers, n_heads) with the change in direct effect for each head
     target_pos: if not none, will only return the change in direct effect for that position
@@ -439,7 +510,7 @@ def get_cde_each_head(target_pos = None, ablate_type = "sample"):
     cde_each_head = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
     for layer in range(model.cfg.n_layers):
         for head in range(model.cfg.n_heads):
-            new_logits = ablation_new_logits_wrapper(heads = [(layer, head)], num_runs = 5, logits = logits, ablation_type = ablate_type)
+            new_logits = ablation_new_logits_wrapper(heads = [(layer, head)], num_runs = 5, logits = logits, ablation_type = ablate_type, freeze_final_ln = freeze_final_ln)
             diff_in_logits = new_logits - logits
             change_in_direct_effect: Float[Tensor, "batch, pos - 1"] = get_correct_logit_score(diff_in_logits)
             if target_pos is not None:
@@ -448,14 +519,14 @@ def get_cde_each_head(target_pos = None, ablate_type = "sample"):
                 cde_each_head[layer, head] = change_in_direct_effect.mean((-1,-2))
     return cde_each_head
 
-def get_cde_each_mlp_layer(target_pos = None, ablate_type = "sample"):
+def get_cde_each_mlp_layer(target_pos = None, ablate_type = "sample", freeze_final_ln = False):
     """
     returns a tensor of shape (n_layers,) with the change in direct effect for each layer
     target_pos: if not none, will only return the change in direct effect for that position
     """
     cde_each_layer = torch.zeros((model.cfg.n_layers))
     for layer in range(model.cfg.n_layers):
-        new_logits = ablation_new_logits_wrapper(mlp_layers = [layer], num_runs = 5, logits = logits, ablation_type = ablate_type)
+        new_logits = ablation_new_logits_wrapper(mlp_layers = [layer], num_runs = 5, logits = logits, ablation_type = ablate_type, freeze_final_ln = freeze_final_ln)
         diff_in_logits = new_logits - logits
         change_in_direct_effect: Float[Tensor, "batch, pos - 1"] = get_correct_logit_score(diff_in_logits)
         if target_pos is not None:
@@ -582,9 +653,9 @@ def create_layered_scatter(
 
 
 # %%
-create_scatter_of_change_from_component(heads = [(1,8)], force_through_origin=True, num_runs = 5, zero_ablate=True, focus_on_newline_to_newline=True)
+create_scatter_of_change_from_component(heads = [(11,1)], force_through_origin=True, num_runs = 5, zero_ablate=True, focus_on_newline_to_newline=False, freeze_final_ln=True)
 # %%
-create_scatter_of_change_from_component(mlp_layers=[11], force_through_origin=True, num_runs = 5, zero_ablate=True, focus_on_newline_to_newline=True)
+create_scatter_of_change_from_component(mlp_layers=[11], force_through_origin=True, num_runs = 5, zero_ablate=True, focus_on_newline_to_newline=False, freeze_final_ln=True)
 # %% See what are the average direct effects of the newline to newline
 show_input(per_head_direct_effect[..., LENGTH_PROMPT_BEFORE_NEWLINE].mean(-1), 
            per_layer_direct_effect[..., LENGTH_PROMPT_BEFORE_NEWLINE].mean(-1),
@@ -596,13 +667,13 @@ show_input(per_head_direct_effect[..., LENGTH_PROMPT_BEFORE_NEWLINE].mean(-1),
 slopes = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
 for layer in range(model.cfg.n_layers):
     for head in range(model.cfg.n_heads):
-        slopes[layer, head] = create_scatter_of_change_from_component(heads = [(layer, head)], force_through_origin=True, num_runs = 5, zero_ablate=True, return_slope=True, focus_on_newline_to_newline=True)
+        slopes[layer, head] = create_scatter_of_change_from_component(heads = [(layer, head)], force_through_origin=True, num_runs = 5, zero_ablate=True, return_slope=True, focus_on_newline_to_newline=True, freeze_final_ln=True)
 # %%
 imshow(slopes, title = f"Slopes for style == {STYLE}")
 # %%
 ablate_type = "zero"
-per_head_cde: Float[Tensor, "layer head"] = get_cde_each_head(ablate_type = ablate_type)
-per_layer_cde: Float[Tensor, "layer"] = get_cde_each_mlp_layer(ablate_type = ablate_type)
+per_head_cde: Float[Tensor, "layer head"] = get_cde_each_head(ablate_type = ablate_type, freeze_final_ln = True)
+per_layer_cde: Float[Tensor, "layer"] = get_cde_each_mlp_layer(ablate_type = ablate_type, freeze_final_ln = True)
 # %% Create a scatter of per_head_direct_effect vs per_head_cde
 create_layered_scatter( 
     heads_x = per_head_direct_effect.mean((-1, -2)), 
@@ -610,8 +681,8 @@ create_layered_scatter(
     x_title = 'Direct Effect of Head', 
     y_title = 'Change in Direct Effect', 
     plot_title = f'Direct Effect vs Change in Direct Effect across all positions in {safe_model_name}; zero_ablate = {ablate_type == "zero"}',
-    mlp_x = per_layer_direct_effect.mean((-1, -2)),
-    mlp_y = per_layer_cde
+    #mlp_x = per_layer_direct_effect.mean((-1, -2)),
+    #mlp_y = per_layer_cde
 ) 
 
 # %%
@@ -626,8 +697,8 @@ create_layered_scatter(
     x_title='Direct Effect of Head', 
     y_title='Change in Direct Effect',
     plot_title=f'Direct Effect vs Change in Direct Effect for \\n -> \\n in {safe_model_name}; zero_ablate = {ablate_type == "zero"}',
-    mlp_x=per_layer_direct_effect[..., LENGTH_PROMPT_BEFORE_NEWLINE].mean((-1)),
-    mlp_y=per_layer_cde_newline
+    #mlp_x=per_layer_direct_effect[..., LENGTH_PROMPT_BEFORE_NEWLINE].mean((-1)),
+    #mlp_y=per_layer_cde_newline
 )
 # %% There is overlap in the ones that don't get backed up / the ones that don't get summarized
 
