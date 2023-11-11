@@ -5,6 +5,18 @@ from helpers import return_partial_functions, return_item, topk_of_Nd_tensor, re
 from scipy.stats import linregress
 import torch.distributed as dist
 # %%
+import sklearn
+from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
+from sklearn import neighbors
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.linear_model import LogisticRegression
+from beartype import beartype as typechecker
+
+
+# %%
 # activate gradient
 torch.set_grad_enabled(True)
 in_notebook_mode = True
@@ -111,7 +123,11 @@ def generate_data(model, owt_dataset, BATCH_SIZE, num_heads, PROMPT_LEN, device,
     return flattened_resids, flattened_labels
 
 
-def generate_isolated_vectors(model, owt_dataset, BATCH_SIZE, num_heads, PROMPT_LEN, device, zero_ablate, layer_to_ablate=9, act_to_read = utils.get_act_name("resid_mid", 9), dataset = owt_dataset):
+@jaxtyped
+@typechecker
+def generate_isolated_vectors(model, BATCH_SIZE: int, num_heads: int, PROMPT_LEN: int, 
+                              device: str, zero_ablate: bool, layer_to_ablate: int =9, 
+                              act_to_read:str = utils.get_act_name("resid_mid", 9), dataset: datasets.arrow_dataset.Dataset = owt_dataset):
     """
     vector = original vector -  ablated residual vector
     picks random prompts for each epoch
@@ -186,6 +202,59 @@ def generate_test_data(model, owt_dataset, epoch, BATCH_SIZE, num_heads, PROMPT_
     #print(flattened_resids[0:10], flattened_resids[0 + BATCH_SIZE * PROMPT_LEN:10+ BATCH_SIZE * PROMPT_LEN])
     return flattened_resids, flattened_labels
 # %%
+def train_classifier_on_ablation_sklearn(model, dataset_func, BATCH_SIZE=5, PROMPT_LEN=40, patience=5, min_train=40, test_size=100):
+    classifier = LogisticRegression()  # or any other scikit-learn classifier
+    best_accuracy = 0
+    epochs_no_improve = 0
+    epoch = 0
+    
+    while True:
+        flattened_resids, flattened_labels = dataset_func(model, 100, model.cfg.n_heads, PROMPT_LEN, device, True, 
+                                                                       layer_to_ablate=9, act_to_read = utils.get_act_name("resid_post", 9), dataset = owt_dataset)
+        
+        # Reshape labels for scikit-learn
+        labels = np.argmax(flattened_labels.cpu().numpy(), axis=1)
+        print(labels)
+        
+        # Train the classifier
+        classifier.fit(flattened_resids.cpu().numpy(), labels)
+        
+        # Predict and calculate accuracy on training set
+        predicted = classifier.predict(flattened_resids.cpu().numpy())
+        accuracy = accuracy_score(labels, predicted)
+
+        # Get Test Accuracy
+        test_resids, test_labels = dataset_func(model,30, model.cfg.n_heads, PROMPT_LEN, device, True, 
+                                                     layer_to_ablate=9, act_to_read = utils.get_act_name("resid_post", 9), dataset = owt_dataset)
+        test_labels = np.argmax(test_labels.cpu().numpy(), axis=1)
+        test_predicted = classifier.predict(test_resids.cpu().numpy())
+        test_accuracy = accuracy_score(test_labels, test_predicted)
+        
+        print(f"Epoch {epoch}, Training Accuracy: {accuracy:.5f}", f"Test Accuracy: {test_accuracy:.5f}")
+        print("Classification Report:\n", classification_report(test_labels, test_predicted))
+        
+        # Early stopping logic
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+            epochs_no_improve = 0
+        else:
+            epochs_no_improve += 1
+
+        if epochs_no_improve >= patience and epoch > min_train:
+            print(f"Early stopping triggered: no improvement in accuracy for {patience} epochs")
+            break
+
+        epoch += 1
+    
+
+    return classifier  # return the trained model
+
+
+
+
+
+
+    
 
 def train_classifier_on_ablation(model, classifier, dataset_func, learning_rate=0.01, BATCH_SIZE=5, PROMPT_LEN=40, patience=5, min_train = 40):
     optimizer = optim.Adam(classifier.parameters(), lr=learning_rate)
@@ -300,6 +369,9 @@ def train_tons_of_classifiers(rank, world_size):
     # save figure to html
     fig.write_html(f"threshold_figures/{safe_model_name}_ablate_by_read_classifier_accuracy.html")
 # %%
+
+
+train_classifier_on_ablation_sklearn(model, generate_isolated_vectors)
 
 # run single GPU of train_tons_of_classifiers
 
