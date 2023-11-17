@@ -76,10 +76,10 @@ from path_patching import Node, IterNode, path_patch, act_patch
 
 from neel_plotly import imshow, line, scatter, histogram
 torch.set_grad_enabled(False)
-device = "cuda" if torch.cuda.is_available() else "cpu"
+#device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # %%
-device
+#device
 
 # %%
 update_layout_set = {

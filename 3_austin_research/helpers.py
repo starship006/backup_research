@@ -135,6 +135,8 @@ def collect_direct_effect(de_cache: ActivationCache = None, correct_tokens: Floa
     display: whether to display the plot or return the data; if False, returns [head, pos] tensor of direct effects
     """
 
+    device = "cuda" if correct_tokens.get_device() >= 0 else "cpu"
+
     if de_cache is None or correct_tokens is None or model is None:
         raise ValueError("de_cache, correct_tokens, and model must not be None")
 
@@ -157,13 +159,13 @@ def collect_direct_effect(de_cache: ActivationCache = None, correct_tokens: Floa
     if collect_individual_neurons:
         for neuron in tqdm(range(model.cfg.d_mlp)):
             single_neuron_output: Float[Tensor, "n_layer batch pos d_model"] = de_cache.stack_neuron_results(layer = -1, neuron_slice = (neuron, neuron + 1), return_labels = False, apply_ln = False)
-            direct_effect_mlp[:, neuron, :, :] = residual_stack_to_direct_effect(single_neuron_output, token_residual_directions, scaling_cache = de_cache).cpu()
+            direct_effect_mlp[:, neuron, :, :] = residual_stack_to_direct_effect(single_neuron_output, token_residual_directions, scaling_cache = de_cache)
     # get per mlp layer effect
-    all_layer_output: Float[Tensor, "n_layer batch pos d_model"] = torch.zeros((model.cfg.n_layers, correct_tokens.shape[0], correct_tokens.shape[1], model.cfg.d_model)).cuda()
+    all_layer_output: Float[Tensor, "n_layer batch pos d_model"] = torch.zeros((model.cfg.n_layers, correct_tokens.shape[0], correct_tokens.shape[1], model.cfg.d_model)).to(device)
     for layer in range(model.cfg.n_layers):
         all_layer_output[layer, ...] = de_cache[f'blocks.{layer}.hook_mlp_out']
 
-    all_layer_direct_effect: Float["n_layer batch pos_minus_one"] = residual_stack_to_direct_effect(all_layer_output, token_residual_directions, scaling_cache = de_cache).cpu()
+    all_layer_direct_effect: Float["n_layer batch pos_minus_one"] = residual_stack_to_direct_effect(all_layer_output, token_residual_directions, scaling_cache = de_cache)
 
 
     if display:    
