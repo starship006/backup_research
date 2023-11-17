@@ -19,4 +19,4 @@ model_names = [
 ]
 
 for model_name in model_names:
-    subprocess.run(["python", "self-repair-detection.py", "--model_name=" + model_name])
+    subprocess.run(["python", "redo-self-repair-detection.py", "--model_name=" + model_name])

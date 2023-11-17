@@ -1,6 +1,6 @@
 """
-okay im going to use good coding practices for dataset generation to actually use sckit learn
-to learn stuff. lets see what happens
+polysemantic NMH behaviors! we know this to be the case in gpt-2 small so we can use this more generally and figure out
+if we can classify head behaviors differently from this.
 """
 
 # %%
@@ -10,6 +10,8 @@ from reused_hooks import zero_ablation_hook
 from helpers import return_partial_functions, return_item, topk_of_Nd_tensor, residual_stack_to_direct_effect, show_input, collect_direct_effect, dir_effects_from_sample_ablating, get_correct_logit_score
 from scipy.stats import linregress
 import torch.distributed as dist
+
+from different_nmh_dataset_gen import generate_dataset
 # %%
 import sklearn
 from sklearn.base import BaseEstimator, ClassifierMixin
@@ -22,9 +24,9 @@ from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from beartype import beartype as typechecker
 from sklearn.neighbors import KNeighborsClassifier
 # %%
-in_notebook_mode = False
+in_notebook_mode = True
 if in_notebook_mode:
-    model_name = "pythia-160m"
+    model_name = "gpt2-small"
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
@@ -40,130 +42,178 @@ model = HookedTransformer.from_pretrained(
     refactor_factored_attn_matrices = False,
     device = device,
 )
-#model.set_use_attn_result(True)
+model.set_use_attn_result(True)
 # %%
-dataset = utils.get_dataset("owt")
-dataset_name = "owt"
-torch.set_grad_enabled(False)
+TEST_PROMPTS_PER_TYPE = 60 # called test cause its only the size appropriate for caching
+PROMPTS, CORRUPTED_PROMPTS, ANSWERS, INCORRECT_ANSWERS, type_names = generate_dataset(model, TEST_PROMPTS_PER_TYPE * 4)
+
+clean_tokens = model.to_tokens(PROMPTS)
+corrupted_tokens = model.to_tokens(CORRUPTED_PROMPTS)
+
+answer_tokens = model.to_tokens(ANSWERS, prepend_bos=False)
+incorrect_answer_tokens = model.to_tokens(INCORRECT_ANSWERS, prepend_bos=False)
+
+assert clean_tokens.shape == corrupted_tokens.shape
+assert answer_tokens.shape == incorrect_answer_tokens.shape
+
+
+SHORT_PROMPT_LEN = clean_tokens.shape[1]
 # %%
+combined_clean_tokens = torch.cat([clean_tokens, answer_tokens], dim=1)
+combined_incorrect_tokens = torch.cat([corrupted_tokens, incorrect_answer_tokens], dim=1)
+
+assert combined_clean_tokens.shape == combined_incorrect_tokens.shape
+print("combined_clean_tokens MAY HAVE IMPROPERLY TOKENIZED STRINGS")
+# %%
+logits, clean_cache = model.run_with_cache(combined_clean_tokens)
+
+# %% First, see which heads in the model are even useful for predicting these
+from helpers import collect_direct_effect
+
+per_head_direct_effect, all_layer_direct_effect = collect_direct_effect(clean_cache, correct_tokens=combined_clean_tokens,model = model,
+                                                                        display=False)
+
+# %%
+imshow(per_head_direct_effect[..., -1].mean(-1), title = "average direct effect of each head on the last token across moving tasks")
+
+top_heads = topk_of_Nd_tensor(per_head_direct_effect[..., -1].mean(-1), 3)
+
+# %%
+good_moving_layer = top_heads[0][0]
+good_moving_head = top_heads[0][1]
+# %%
+
 
 @jaxtyped
 @typechecker
-def generate_vectors(model, isolated: bool,
-                    BATCH_SIZE: int, num_heads: int, PROMPT_LEN: int, 
-                        device: str, layer_to_ablate: int = 9, 
-                        act_to_read:str = utils.get_act_name("resid_mid", 9), dataset: datasets.arrow_dataset.Dataset = dataset):
+def generate_data_vectors(layer, head, model = model, device = device, new_prompt_per_type_amount = TEST_PROMPTS_PER_TYPE):
     """
-    if isolated:
-        vector = original vector -  ablated residual vector
-    else:
-        vector = ablated residual vector
-    picks random prompts for each epoch BY ZERO ABLATING
-    each ablated head has PROMPT_LEN * BATCH_SIZE residual stream vectors generated for it
+    gets output vectors for a head and sees creates labels for it depending on the four types
     """
     # Pick random indices for owt_dataset tokens
-    random_indices = random.sample(range(len(dataset)), BATCH_SIZE)
-    all_owt_tokens = model.to_tokens([dataset[i]["text"] for i in random_indices]).to(device)
+    
     
     all_resids = []
     all_labels = []
 
     def store_item_hook(
-        resid_in_model,
+        item,
         hook,
         where_to_store: list
     ):
-        where_to_store.append(resid_in_model.clone())
+        where_to_store.append(item.clone())
 
 
-    def space_efficient_dir_effects_from_zero_ablating(model, owt_tokens, layer_to_ablate, head_to_ablate, act_to_read = act_to_read):
-        """
-        zero ablates an attention head and returns a specific activation
-        """
-
-        model.reset_hooks()
-        model.add_hook(utils.get_act_name("z", layer_to_ablate), partial(zero_ablation_hook, head_index_to_ablate=head_to_ablate))
-        stored_acts = []
-        model.add_hook(act_to_read, partial(store_item_hook, where_to_store=stored_acts))
-        model.run_with_hooks(owt_tokens)
-        model.reset_hooks()
-        return stored_acts[0]
-
-
-    for head_to_ablate in range(num_heads):
-        # generate the residual stream vectors
-        owt_tokens = all_owt_tokens[..., 0:PROMPT_LEN]
-        
-        resid_pre = space_efficient_dir_effects_from_zero_ablating(model, owt_tokens, layer_to_ablate, head_to_ablate)
-        
-        if isolated:
-            # get the original vectors
-            _, clean_cache = model.run_with_cache(owt_tokens)
-            clean_resid_pre = clean_cache[act_to_read]
-
-            # subtract the residual vectors and add to list
-            all_resids.append(clean_resid_pre - resid_pre)
-        else:
-            all_resids.append(resid_pre)
-
-        # generate labels
-        labels = F.one_hot(torch.tensor([head_to_ablate]), num_classes=num_heads).to(device).float()
-        all_labels.append(einops.repeat(labels, "1 h -> b p h", b=BATCH_SIZE, p=PROMPT_LEN))
-        
-    concatenated_resids = torch.cat(all_resids, dim=0)
-    concatenated_labels = torch.cat(all_labels, dim=0)
+    model.reset_hooks()
+    storage = []
+    model.add_hook(utils.get_act_name("result", layer), partial(store_item_hook, where_to_store = storage))
+    
+    if new_prompt_per_type_amount != TEST_PROMPTS_PER_TYPE:
+        PROMPTS, _, _, _, _ = generate_dataset(model, new_prompt_per_type_amount * 4)
+        clean_tokens = model.to_tokens(PROMPTS)
+    
+    model.run_with_hooks(clean_tokens)
+    model.reset_hooks()
+    head_output_vectors = storage[0][:, -1, head, :] # get the outputs of an attentnion head at the last position
+    
+    
+    flattened_outputs = head_output_vectors # no flattening this time
+    flattened_labels = torch.zeros((new_prompt_per_type_amount * 4)).to(device)
+    for i in range(4):
+        flattened_labels[i * new_prompt_per_type_amount: (i+1) * new_prompt_per_type_amount] = i
     
 
     
-    flattened_resids = einops.rearrange(concatenated_resids, "b p h -> (b p) h")
-    flattened_labels = einops.rearrange(concatenated_labels, "b p h -> (b p) h")
-    
-
-    
-    assert flattened_resids.shape[0] == flattened_labels.shape[0]
-    assert flattened_resids.shape[1] == model.cfg.d_model
-    assert len(flattened_resids.shape) == 2
-    
-    return flattened_resids, flattened_labels
+    assert flattened_outputs.shape[0] == flattened_labels.shape[0]
+    assert flattened_outputs.shape[1] == model.cfg.d_model
+    assert len(flattened_outputs.shape) == 2
+    assert len(flattened_labels.shape) == 1
+    print(flattened_outputs.shape, flattened_labels.shape)
+    return flattened_outputs, flattened_labels
 
 
 
-        
+flattened_outputs, flattened_labels = generate_data_vectors(good_moving_layer, good_moving_head, new_prompt_per_type_amount=300)
+
 
 # %%
-def train_classifier_on_ablation_sklearn(model, flattened_resid, flattened_labels):
-    classifier = sklearn.svm.LinearSVC()  # or any other scikit-learn classifier
-    best_accuracy = 0
+def preprocess_data(flattened_outputs, flattened_labels):
+    # Convert Tensors to numpy arrays if necessary
+    if isinstance(flattened_outputs, torch.Tensor):
+        flattened_outputs = flattened_outputs.cpu().numpy()
+    if isinstance(flattened_labels, torch.Tensor):
+        flattened_labels = flattened_labels.cpu().numpy()
+
+    # Skip filtering for balance - dataset generation guarantees they all have the same amount
+
+
+    # Shuffle the data
+    shuffled_indices = np.random.permutation(len(flattened_outputs))
+    shuffled_outputs = flattened_outputs[shuffled_indices]
+    shuffled_labels = flattened_labels[shuffled_indices]
+
+
+
+    # Split into training and testing sets
+    split_idx = len(shuffled_outputs) * 2 // 3
+    train_outputs = shuffled_outputs[:split_idx]
+    test_outputs = shuffled_outputs[split_idx:]
+    train_labels = shuffled_labels[:split_idx]
+    test_labels = shuffled_labels[split_idx:]
+    return train_outputs, test_outputs, train_labels, test_labels
+
+
+def train_classifier_on_ablation_sklearn(flattened_outputs, flattened_labels, model = model):
     
-    # Reshape labels for scikit-learn
-    labels = np.argmax(flattened_labels.cpu().numpy(), axis=1)
+    train_outputs, test_outputs, train_labels, test_labels = preprocess_data(flattened_outputs, flattened_labels)
     
-    
+    if train_outputs.shape[0] <= 100:
+        print("not enough data")
+        return None, 0
+
+
     # Train the classifier
-    classifier.fit(flattened_resids.cpu().numpy(), labels)
+    classifier = sklearn.linear_model.LogisticRegression()  # or any other scikit-learn classifier
+    classifier.fit(train_outputs, train_labels)
     
     # Predict and calculate accuracy on training set
-    predicted = classifier.predict(flattened_resids.cpu().numpy())
-    accuracy = accuracy_score(labels, predicted)
+    predicted = classifier.predict(train_outputs)
+    accuracy = accuracy_score(train_labels, predicted)
 
     # Get Test Accuracy
-    test_resids, test_labels = generate_vectors(model, True, 20, model.cfg.n_heads, 80, device, 
-                                                                       layer_to_ablate=9, act_to_read = utils.get_act_name("resid_post", 9), dataset = dataset)
-    
-    test_labels = np.argmax(test_labels.cpu().numpy(), axis=1)
-    test_predicted = classifier.predict(test_resids.cpu().numpy())
+    test_predicted = classifier.predict(test_outputs)
     test_accuracy = accuracy_score(test_labels, test_predicted)
     
     print(f"Training Accuracy: {accuracy:.5f}", f"Test Accuracy: {test_accuracy:.5f}")
     print("Classification Report:\n", classification_report(test_labels, test_predicted))
-    return classifier  # return the trained model
+    return classifier, test_accuracy  # return the trained model
 
 # %%
-# train_classifier_on_ablation_sklearn(model)
+train_classifier_on_ablation_sklearn(flattened_outputs, flattened_labels)
+
+
+
+
+# %%
+detection_ability = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
+
+# %%
+for layer in range(0, model.cfg.n_layers):
+    for head in range(model.cfg.n_heads):
+        print(f"layer {layer} head {head}")
+        flattened_outputs, flattened_labels = generate_data_vectors(layer, head, new_prompt_per_type_amount=300)
+        _, accuracy = train_classifier_on_ablation_sklearn(flattened_outputs, flattened_labels, model)
+        detection_ability[layer, head] = accuracy
+# %%
+fig = imshow(detection_ability, title = "classification accuracy of polymorphic activities in gpt2 small", return_fig=True)
+# save to html
+fig.write_html(f"clustering_results/{safe_model_name}-polymorphism-detection.html")
+fig.show()
+
 # %%
 from sklearn.cluster import KMeans
 @typechecker
-def cluster_vectors(vectors, num_clusters: int = 8, verbose: bool = True):
+def cluster_vectors(vectors, num_clusters, verbose: bool = True):
     """
     Clusters the vectors using the KMeans algorithm, providing runtime statistics and visualization.
     
