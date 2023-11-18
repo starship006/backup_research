@@ -12,11 +12,11 @@ from imports import *
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 import argparse
 from reused_hooks import zero_ablation_hook
-from helpers import return_partial_functions, return_item, topk_of_Nd_tensor, residual_stack_to_direct_effect, show_input, collect_direct_effect, dir_effects_from_sample_ablating, get_correct_logit_score
+from helpers import return_partial_functions, return_item, topk_of_Nd_tensor, residual_stack_to_direct_effect, show_input, collect_direct_effect, dir_effects_from_sample_ablating, get_correct_logit_score, print_tokens
 from scipy.stats import linregress
 import torch.distributed as dist
 
-from updated_nmh_dataset_gen import generate_ioi_mr_prompts
+from updated_nmh_dataset_gen import generate_ioi_mr_prompts, generate_invariant_holding_ioi, generate_ioi_mr_random_prompts
 # %%
 import sklearn
 from sklearn.base import BaseEstimator, ClassifierMixin
@@ -28,6 +28,11 @@ from sklearn.metrics import accuracy_score, classification_report
 from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from beartype import beartype as typechecker
 from sklearn.neighbors import KNeighborsClassifier
+
+
+# %%
+%load_ext autoreload
+%autoreload 2
 # %%
 in_notebook_mode = True
 if in_notebook_mode:
@@ -50,8 +55,13 @@ model = HookedTransformer.from_pretrained(
 model.set_use_attn_result(True)
 # %%
 # to avoid accidentally calling this TEST_PROMPTS_PER_TYPE =  # called test cause its only the size appropriate for caching
-PROMPTS, ANSWERS, ANSWER_INDICIES = generate_ioi_mr_prompts(model, 60)
+#PROMPTS, ANSWERS, ANSWER_INDICIES = generate_ioi_mr_prompts(model, 60)
 
+DATASET_FUNC = generate_ioi_mr_random_prompts
+# %%
+
+PROMPTS, ANSWERS, ANSWER_INDICIES = DATASET_FUNC(model, 60)
+NUM_GROUPS = 3
 # %%
 clean_tokens: Float[Tensor, "batch pos"] = model.to_tokens(PROMPTS).to(device)
 answer_tokens: Float[Tensor, "batch 1"] = model.to_tokens(ANSWERS, prepend_bos=False).to(device)
@@ -62,6 +72,7 @@ answer_token_idx: Float[Tensor, "batch"] = torch.tensor(ANSWER_INDICIES).to(devi
 unsqueezed_answers_idx = answer_token_idx.unsqueeze(-1)
 indexed_answers = clean_tokens.gather(-1, unsqueezed_answers_idx)
 assert torch.all(torch.eq(answer_tokens, indexed_answers))
+
 # %%
 logits, cache = model.run_with_cache(clean_tokens)
 
@@ -77,8 +88,12 @@ expanded_indicies = einops.repeat(answer_token_idx, "b -> a c b 1", a = model.cf
 # %%
 important_direct_effect: Float[Tensor, "layer head batch"] = per_head_direct_effect.gather(-1, expanded_indicies - 1).squeeze()
 # %%
-imshow(important_direct_effect[..., 0:(int(important_direct_effect.shape[-1] / 2))].mean(-1), title = "average de of head on IOI prompts")
-imshow(important_direct_effect[..., (int(important_direct_effect.shape[-1] / 2)):].mean(-1), title = "average de of head on MR/MRS prompts")
+group_idx_size = 60
+
+for i in range(NUM_GROUPS):
+    imshow(important_direct_effect[..., i * group_idx_size:(i + 1) * group_idx_size].mean(-1), title = "average de of head on IOI prompts")
+
+
 # %%
 top_heads = topk_of_Nd_tensor(important_direct_effect[..., (int(important_direct_effect.shape[-1] / 2)):].mean(-1), 3)
 
@@ -87,14 +102,13 @@ good_moving_layer = top_heads[0][0]
 good_moving_head = top_heads[0][1]
 # %%
 # CREATE GLOBAL PROMPTS FOR THE FOLLOWING TRAINING
-global_prompts_per_type = 1000
-global_prompts, _, global_answer_idx = generate_ioi_mr_prompts(model, global_prompts_per_type)
+global_prompts_per_type = 700
+global_prompts, _, global_answer_idx = DATASET_FUNC(model, global_prompts_per_type)
 
 # %%
-
 @jaxtyped
 @typechecker
-def generate_data_vectors(layer, head, model = model, device = device, prompts_per_type = 1000) -> Tuple[Float[Tensor, "batch d_model"], Float[Tensor, "batch"]]:
+def generate_data_vectors(layer, head, model = model, device = device, prompts_per_type = 500) -> Tuple[Float[Tensor, "batch d_model"], Float[Tensor, "batch"]]:
     """
     gets output vectors for a head and sees creates labels for it depending on the four types
     """
@@ -120,7 +134,7 @@ def generate_data_vectors(layer, head, model = model, device = device, prompts_p
         prompts = global_prompts
         answer_idx = global_answer_idx
     else:
-        prompts, _, answer_idx = generate_ioi_mr_prompts(model, prompts_per_type)    
+        prompts, _, answer_idx = DATASET_FUNC(model, prompts_per_type)    
 
 
     local_clean_tokens: Float[Tensor, "batch pos"] = model.to_tokens(prompts).to(device)
@@ -134,7 +148,11 @@ def generate_data_vectors(layer, head, model = model, device = device, prompts_p
     
     flattened_outputs: Float[Tensor, "batch d_model"] = head_output_vectors.gather(1, expanded_indicies - 1).squeeze()
     flattened_labels = torch.zeros(flattened_outputs.shape[0])
-    flattened_labels[(prompts_per_type * 2):] = 1
+
+
+    
+    for i in range(NUM_GROUPS):
+        flattened_labels[(prompts_per_type * i):prompts_per_type * (i + 1)] = i
     
 
     # Quick test to ensure we gathered correct tensors
@@ -150,11 +168,7 @@ def generate_data_vectors(layer, head, model = model, device = device, prompts_p
     print(flattened_outputs.shape, flattened_labels.shape)
     return flattened_outputs, flattened_labels
 
-
-
 flattened_outputs, flattened_labels = generate_data_vectors(good_moving_layer, good_moving_head, prompts_per_type=1000)
-
-
 # %%
 def preprocess_data(flattened_outputs, flattened_labels):
     # Convert Tensors to numpy arrays if necessary
@@ -181,7 +195,6 @@ def preprocess_data(flattened_outputs, flattened_labels):
     test_labels = shuffled_labels[split_idx:]
     return train_outputs, test_outputs, train_labels, test_labels
 
-
 def train_classifier_on_ablation_sklearn(flattened_outputs, flattened_labels, model = model):
     
     train_outputs, test_outputs, train_labels, test_labels = preprocess_data(flattened_outputs, flattened_labels)
@@ -192,7 +205,7 @@ def train_classifier_on_ablation_sklearn(flattened_outputs, flattened_labels, mo
 
 
     # Train the classifier
-    classifier = sklearn.linear_model.LogisticRegression()  # or any other scikit-learn classifier
+    c
     classifier.fit(train_outputs, train_labels)
     
     # Predict and calculate accuracy on training set
@@ -208,23 +221,18 @@ def train_classifier_on_ablation_sklearn(flattened_outputs, flattened_labels, mo
     return classifier, test_accuracy  # return the trained model
 
 # %%
-train_classifier_on_ablation_sklearn(flattened_outputs, flattened_labels)
-
-
-
-
+classifier, ability = train_classifier_on_ablation_sklearn(flattened_outputs, flattened_labels)
 # %%
 detection_ability = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
-
 # %%
 for layer in range(0, model.cfg.n_layers):
     for head in range(model.cfg.n_heads):
         print(f"layer {layer} head {head}")
-        flattened_outputs, flattened_labels = generate_data_vectors(layer, head, prompts_per_type=500)
+        flattened_outputs, flattened_labels = generate_data_vectors(layer, head, prompts_per_type=global_prompts_per_type)
         _, accuracy = train_classifier_on_ablation_sklearn(flattened_outputs, flattened_labels, model)
         detection_ability[layer, head] = accuracy
 # %%
-fig = imshow(detection_ability, title = "classification accuracy of polymorphic activities in gpt2 small", return_fig=True)
+fig = imshow(detection_ability, title = "classification accuracy between ABBA and BAAB activities in gpt2 small", return_fig=True)
 # save to html
 #fig.write_html(f"clustering_results/{safe_model_name}-polymorphism-detection.html") -- old data may be bad
 fig.show()
@@ -320,27 +328,22 @@ def visualize_and_evaluate(reduced_vectors, labels, true_labels, num_clusters: i
 
 # %% Reduced the vectors
 stats_storage = []
-for layer in range(model.cfg.n_heads):
-    print(f"Here are stats on layer {layer}")
-    flattened_resids, flattened_labels = generate_vectors(model, True, 100, model.cfg.n_heads, 40, device, 
-                                                                        layer_to_ablate=layer, act_to_read = utils.get_act_name("resid_post", layer), dataset = dataset)
-    
-    num_clusters = model.cfg.n_heads  # Adjust as needed
-    cluster_labels, kmeans_model = cluster_vectors(flattened_resids, num_clusters=num_clusters, verbose=True)
-    
-    pca = PCA(n_components=3)
-    reduced_vectors = pca.fit_transform(flattened_resids.cpu().numpy())
-    
-    # Visualization with Plotly
-    fig, stats_for_layer = visualize_and_evaluate(reduced_vectors, cluster_labels, flattened_labels, num_clusters=num_clusters)
-    fig.update_layout(title=f"PCA Visualization of {model_name} Residual Vectors")
-    fig.show()
 
-    stats_storage.append(stats_for_layer)
+    
+flattened_outputs, flattened_labels = generate_data_vectors(good_moving_layer, good_moving_head, prompts_per_type=1000)
 
+cluster_labels, kmeans_model = cluster_vectors(flattened_outputs, num_clusters=NUM_GROUPS, verbose=True)
+
+pca = PCA(n_components=3)
+reduced_vectors = pca.fit_transform(flattened_outputs.cpu().numpy())
+
+# Visualization with Plotly
+fig, stats_for_layer = visualize_and_evaluate(reduced_vectors, cluster_labels, flattened_labels, num_clusters=NUM_GROUPS)
+fig.update_layout(title=f"PCA Visualization of {model_name} Residual Vectors")
+fig.show()
+
+stats_storage.append(stats_for_layer)
 # %%
-
-
 def plot_combined_metrics(stats_storage):
     # Initialize dictionaries to store metric values for each layer
     metric_values = {
@@ -381,4 +384,77 @@ def plot_combined_metrics(stats_storage):
 # Usage
 plot_combined_metrics(stats_storage)
 
+# %% Part 2: Use the learned classifier to predict at what part a head is performing IOI.
+rand_vector = torch.randn((1, model.cfg.d_model)).to(device)
+print(classifier.decision_function(rand_vector.cpu().numpy()))
+print(classifier.predict(rand_vector.cpu().numpy()))
+# %%
+torch.cuda.empty_cache()
+del cache
+# %%
+dataset = utils.get_dataset("owt")
+dataset_name = "owt"
+# %%
+BATCH_SIZE = 100
+PROMPT_LEN = 100
+
+all_owt_tokens = model.to_tokens(dataset[0:BATCH_SIZE * 2]["text"]).to(device)
+owt_tokens = all_owt_tokens[0:BATCH_SIZE][:, :PROMPT_LEN]
+assert owt_tokens.shape  == (BATCH_SIZE, PROMPT_LEN)
+# %%
+owt_tokens
+# %%
+def get_outputs(layer, head, clean_tokens: Float[Tensor, "batch pos"]):
+    def store_item_hook(
+        item,
+        hook,
+        where_to_store: list
+    ):
+        where_to_store.append(item.clone())
+
+
+    model.reset_hooks()
+    storage = []
+    model.add_hook(utils.get_act_name("result", layer), partial(store_item_hook, where_to_store = storage))
+
+    model.run_with_hooks(clean_tokens)
+    model.reset_hooks()
+    return storage[0][..., head, :]
+# %%
+SUBBATCH_SIZE = 50
+random_permutation = torch.randperm(owt_tokens.shape[0])
+new_tokens = owt_tokens[random_permutation[0:SUBBATCH_SIZE]]
+outputs: Float[Tensor, "batch pos d_model"] = get_outputs(good_moving_layer, good_moving_head, new_tokens)
+
+
+# %%
+SUBBATCH_SIZE = 3
+made_up_prompts = [
+    "sci kit learn logistic regression, my code may not be optimal. but yeah, so cody and mary went. but that didn't go great? mary gave cody stuff. but it makes sense that linear stuff may not work well. ",
+    "Sutskever and james likely has many followers within the company. james told suskever what he wanted, but it was confusing. Former employees describe him as a  well-respected and hands-on leader who’s crucial for guiding the startup’s frontier tech.",
+    "Now, it will feel uncomfortable to move away from jupyter notebooks for some workflows. You might be used to writing small snippets of code and then interact with it immediately to see whether it works - moving the code to a module means you can’t use it in this very immediate fashion. We’ll fix this discomfort later as we learn about testing."
+]
+new_tokens = model.to_tokens(made_up_prompts).to(device)
+PROMPT_LEN = new_tokens.shape[-1]
+outputs = get_outputs(good_moving_layer, good_moving_head, new_tokens)
+
+
+
+flattened_outputs = einops.rearrange(outputs, "batch pos d_model -> (batch pos) d_model")
+# %%
+predictions = classifier.predict_proba(flattened_outputs.cpu().numpy())
+reshaped_predictions = einops.rearrange(predictions, "(batch pos) num_classes -> batch pos num_classes", batch = SUBBATCH_SIZE, pos = PROMPT_LEN)
+# %%
+chance_of_ioi = reshaped_predictions[..., 0]
+chance_of_mr_mrs = reshaped_predictions[..., 1]
+chance_of_random = reshaped_predictions[..., 2]
+
+# %%
+top_ioi = topk_of_Nd_tensor(torch.tensor(chance_of_ioi), 20)
+
+# %%
+for batch_idx in range(10):
+    print(f"----------- HI -------- BATCH {top_ioi[batch_idx][0]}, POS: {top_ioi[batch_idx][1] + 10}, PROB: {reshaped_predictions[top_ioi[batch_idx][0], top_ioi[batch_idx][1]]}\n")
+
+    print_tokens(model, new_tokens, top_ioi[batch_idx][0], top_ioi[batch_idx][1], top_ioi[batch_idx][1] + 10)
 # %%

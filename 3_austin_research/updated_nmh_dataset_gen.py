@@ -422,6 +422,9 @@ ABBA_TEMPLATES = [
     "As{A} and{B} went to the {PLACE},{B} {VERB} a {OBJECT} to{A}",
     "Today,{A} and{B} strolled in the {PLACE}.{B} {VERB} a {OBJECT} to{A}",
     "As{A} and{B} walked around in the {PLACE},{B} {VERB} a {OBJECT} to{A}",
+    "Yesterday,{A} and{B} went inside of the {PLACE} and {B} {VERB} a {OBJECT} to{A}",
+    "Together {A} and{B} went towards the {PLACE}.{B} {VERB} a {OBJECT} to{A}",
+    "Finally, {A} and{B} ran towards the {PLACE}.{B} {VERB} a {OBJECT} towards{A}",
 ]
 
 BAAB_TEMPLATES = [template.replace("{A}", "{C}").replace("{B}", "{A}").replace("{C}", "{B}") for template in ABBA_TEMPLATES]
@@ -488,25 +491,69 @@ def make_ioi_prompts(model, template_list: list, name_a_is_correct: bool, BATCH_
 
 
 # %%
-ignore_mr_templates = ["We talked to{A}{B}, who {VERB} the {OBJECT}. As Mr.{B}",
-                        "We spoke with{A}{B}, who {VERB} a {OBJECT}. As Mrs.{B}",
-                        "We chatted with{A}{B}, who {VERB} a {OBJECT}. As Ms.{B}",
+ignore_mr_templates = ["We talked to{A}{B}, who {VERB} the {OBJECT}. As we strolled, Mr.{B}",
+                        "Afterwards, we spoke with{A}{B}, who {VERB} a {OBJECT}. Then, Mrs.{B}",
+                        "As friends, we chatted with{A}{B}, who {VERB} a {OBJECT}. When Ms.{B}",
                         "They talked to{A}{B}, who {VERB} the {OBJECT}. As Dr.{B}",
-                        "I conversed with{A}{B}, who {VERB} the {OBJECT}. As Miss{B}",
-                        "I talked with{A}{B}, who {VERB} the {OBJECT}. As Mister{B}"]
+                        "Today I conversed with{A}{B}, who {VERB} the {OBJECT}. Then, Miss{B}",
+                        "I walked around with{A}{B}, who {VERB} me the {OBJECT}. Finally, when Mister{B}",
+                        "I can't believe it, but I talked to{A}{B}, who {VERB} the {OBJECT}. As we walked, Mr.{B}",
+                        "Yesterday, we ran with{A}{B}, who {VERB} a {OBJECT}. When Mrs.{B}",
+                        "Together we went towards{A}{B}, who {VERB} a {OBJECT}. As we walked, Mr.{B}",]
+
+
+completely_random_prompts = ["Yeah nothing much going on here, said{A}, who {VERB} a {OBJECT}. When I chatted with{B}",
+                             "I saw{A}. The {OBJECT} {VERB} forward. I can't quite tell why, though, said{B}",
+                             "Nothing for{A}, they {VERB} a {OBJECT}. Then,{B}",
+                             "As friends,{A} and I talked about the {OBJECT}, which I {VERB}. Then,{B}",
+                             "We went towards the {OBJECT}, which I {VERB}. As we walked,{B}",
+                             "They {VERB} a {OBJECT}, and{A} and{B}"]
+
+
+
+just_induction_templates = ["We talked to{A}{B}, who {VERB} the {OBJECT}. As{A}{B}",
+                        "We spoke with{A}{B}, who {VERB} a {OBJECT}. When{A}{B}",
+                        "We chatted with{A}{B}, who {VERB} a {OBJECT}. For{A}{B}",
+                        "They talked to{A}{B}, who {VERB} the {OBJECT}. Thus,{A}{B}}",
+                        "I conversed with{A}{B}, who {VERB} the {OBJECT}. I told{A}{B}",
+                        "I talked with{A}{B}, who {VERB} the {OBJECT}. Finally,{A}{B}"]
 # %%
 #MR_PROMPTS, MR_ANSWERS, MR_ANSWER_INDICIES = make_ioi_prompts(ignore_mr_templates, False)
 # %%
 
 
-def generate_ioi_mr_prompts(model, SUBSEC_SIZE = 50):
+def generate_ioi_mr_prompts(model, GROUP_SIZE = 50):
     """
     generates SUBSEC_SIZE * 4 prompts, with 1/2 of them being MR/MRS prompts, 1/4 being ABBA prompts, and 1/4 being BAAB prompts
 
     returns prompts, answers, and answer indicies
     """
-    ABBA_PROMPTS, ABBA_ANSWERS, ABBA_ANSWER_INDICIES = make_ioi_prompts(model, ABBA_TEMPLATES, True, BATCH_SIZE=SUBSEC_SIZE)
-    BAAB_PROMPTS, BAAB_ANSWERS, BAAB_ANSWER_INDICIES = make_ioi_prompts(model, BAAB_TEMPLATES, False, BATCH_SIZE=SUBSEC_SIZE)
-    MR_PROMPTS, MR_ANSWERS, MR_ANSWER_INDICIES = make_ioi_prompts(model, ignore_mr_templates, False, BATCH_SIZE=SUBSEC_SIZE * 2)
+    assert GROUP_SIZE % 2 == 0
+
+    ABBA_PROMPTS, ABBA_ANSWERS, ABBA_ANSWER_INDICIES = make_ioi_prompts(model, ABBA_TEMPLATES, True, BATCH_SIZE=GROUP_SIZE // 2)
+    BAAB_PROMPTS, BAAB_ANSWERS, BAAB_ANSWER_INDICIES = make_ioi_prompts(model, BAAB_TEMPLATES, False, BATCH_SIZE=GROUP_SIZE // 2)
+    MR_PROMPTS, MR_ANSWERS, MR_ANSWER_INDICIES = make_ioi_prompts(model, ignore_mr_templates, False, BATCH_SIZE=GROUP_SIZE)
 
     return ABBA_PROMPTS + BAAB_PROMPTS + MR_PROMPTS, ABBA_ANSWERS + BAAB_ANSWERS + MR_ANSWERS, ABBA_ANSWER_INDICIES + BAAB_ANSWER_INDICIES + MR_ANSWER_INDICIES
+
+
+def generate_invariant_holding_ioi(model, GROUP_SIZE = 50):
+    assert GROUP_SIZE % 2 == 0
+
+    ABBA_PROMPTS, ABBA_ANSWERS, ABBA_ANSWER_INDICIES = make_ioi_prompts(model, ABBA_TEMPLATES, True, BATCH_SIZE=GROUP_SIZE)
+    BAAB_PROMPTS, BAAB_ANSWERS, BAAB_ANSWER_INDICIES = make_ioi_prompts(model, BAAB_TEMPLATES, False, BATCH_SIZE=GROUP_SIZE)
+
+    return ABBA_PROMPTS + BAAB_PROMPTS, ABBA_ANSWERS + BAAB_ANSWERS, ABBA_ANSWER_INDICIES + BAAB_ANSWER_INDICIES
+
+
+def generate_ioi_mr_random_prompts(model, GROUP_SIZE = 50):
+    assert GROUP_SIZE % 2 == 0
+
+    ABBA_PROMPTS, ABBA_ANSWERS, ABBA_ANSWER_INDICIES = make_ioi_prompts(model, ABBA_TEMPLATES, True, BATCH_SIZE=GROUP_SIZE // 2)
+    BAAB_PROMPTS, BAAB_ANSWERS, BAAB_ANSWER_INDICIES = make_ioi_prompts(model, BAAB_TEMPLATES, False, BATCH_SIZE=GROUP_SIZE // 2)
+    MR_PROMPTS, MR_ANSWERS, MR_ANSWER_INDICIES = make_ioi_prompts(model, ignore_mr_templates, False, BATCH_SIZE=GROUP_SIZE)
+
+    RANDOM_PROMPTS, RANDOM_ANSWERS, RANDOM_ANSWER_INDICIES = make_ioi_prompts(model, completely_random_prompts, False, BATCH_SIZE=GROUP_SIZE)
+
+    return ABBA_PROMPTS + BAAB_PROMPTS + MR_PROMPTS + RANDOM_PROMPTS, ABBA_ANSWERS + BAAB_ANSWERS + MR_ANSWERS + RANDOM_ANSWERS, ABBA_ANSWER_INDICIES + BAAB_ANSWER_INDICIES + MR_ANSWER_INDICIES + RANDOM_ANSWER_INDICIES
+# %%
