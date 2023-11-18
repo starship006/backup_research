@@ -12,6 +12,7 @@ import random
 import copy
 import re
 
+import transformer_lens.utils as utils
 
 # %%
 # model = HookedTransformer.from_pretrained(
@@ -427,6 +428,8 @@ ABBA_TEMPLATES = [
     "Finally, {A} and{B} ran towards the {PLACE}.{B} {VERB} a {OBJECT} towards{A}",
 ]
 
+
+
 BAAB_TEMPLATES = [template.replace("{A}", "{C}").replace("{B}", "{A}").replace("{C}", "{B}") for template in ABBA_TEMPLATES]
 
 # %%
@@ -440,7 +443,7 @@ def get_rand_item_unlike_prev(list_to_pull_from:list, prev_items: set):
             return item
 
 # %%
-def make_ioi_prompts(model, template_list: list, name_a_is_correct: bool, BATCH_SIZE = 50):
+def make_ioi_prompts(model, template_list: list, name_a_is_correct: bool, BATCH_SIZE = 50, noise = None):
     # get a list of names that are one token only
     ONE_TOKEN_NAMES = []
     for name in NAMES:
@@ -471,6 +474,14 @@ def make_ioi_prompts(model, template_list: list, name_a_is_correct: bool, BATCH_
             OBJECT = OBJECT,
             PLACE = PLACE
         )
+
+        
+        if noise is not None:
+            random_start = random.randint(0, noise.shape[1] // 3 - 1)
+            random_length = random.randint(0, 100)
+            rand_subset = noise[random.randint(0, noise.shape[0] - 1), random_start:random_start + random_length]
+            template = model.to_string(rand_subset) + ". " + template
+        
         correct_name = NAME_A if name_a_is_correct else NAME_B
 
         # check that the final token is the prediction of the token (this is what we will be measuring)
@@ -549,11 +560,25 @@ def generate_invariant_holding_ioi(model, GROUP_SIZE = 50):
 def generate_ioi_mr_random_prompts(model, GROUP_SIZE = 50):
     assert GROUP_SIZE % 2 == 0
 
-    ABBA_PROMPTS, ABBA_ANSWERS, ABBA_ANSWER_INDICIES = make_ioi_prompts(model, ABBA_TEMPLATES, True, BATCH_SIZE=GROUP_SIZE // 2)
-    BAAB_PROMPTS, BAAB_ANSWERS, BAAB_ANSWER_INDICIES = make_ioi_prompts(model, BAAB_TEMPLATES, False, BATCH_SIZE=GROUP_SIZE // 2)
-    MR_PROMPTS, MR_ANSWERS, MR_ANSWER_INDICIES = make_ioi_prompts(model, ignore_mr_templates, False, BATCH_SIZE=GROUP_SIZE)
+    dataset = utils.get_dataset("owt")
+    dataset_name = "owt"
+    BATCH_SIZE = GROUP_SIZE * 3
+    PROMPT_LEN = 15
+    all_owt_tokens = model.to_tokens(dataset[0:BATCH_SIZE * 4]["text"])
+    
 
-    RANDOM_PROMPTS, RANDOM_ANSWERS, RANDOM_ANSWER_INDICIES = make_ioi_prompts(model, completely_random_prompts, False, BATCH_SIZE=GROUP_SIZE)
+
+
+    ABBA_PROMPTS, ABBA_ANSWERS, ABBA_ANSWER_INDICIES = make_ioi_prompts(model, ABBA_TEMPLATES, True, BATCH_SIZE=GROUP_SIZE // 2, noise = all_owt_tokens)
+    BAAB_PROMPTS, BAAB_ANSWERS, BAAB_ANSWER_INDICIES = make_ioi_prompts(model, BAAB_TEMPLATES, False, BATCH_SIZE=GROUP_SIZE // 2, noise = all_owt_tokens)
+    MR_PROMPTS, MR_ANSWERS, MR_ANSWER_INDICIES = make_ioi_prompts(model, ignore_mr_templates, False, BATCH_SIZE=GROUP_SIZE, noise = all_owt_tokens)
+
+    RANDOM_PROMPTS, RANDOM_ANSWERS, RANDOM_ANSWER_INDICIES = make_ioi_prompts(model, completely_random_prompts, False, BATCH_SIZE=GROUP_SIZE, noise = all_owt_tokens)
 
     return ABBA_PROMPTS + BAAB_PROMPTS + MR_PROMPTS + RANDOM_PROMPTS, ABBA_ANSWERS + BAAB_ANSWERS + MR_ANSWERS + RANDOM_ANSWERS, ABBA_ANSWER_INDICIES + BAAB_ANSWER_INDICIES + MR_ANSWER_INDICIES + RANDOM_ANSWER_INDICIES
-# %%
+
+
+def generate_ioi_mr_random_prompts_with_appended_noise(model, GROUP_SIZE = 50):
+    assert GROUP_SIZE % 2 == 0
+
+

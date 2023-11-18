@@ -36,7 +36,7 @@ from sklearn.neighbors import KNeighborsClassifier
 # %%
 in_notebook_mode = True
 if in_notebook_mode:
-    model_name = "pythia-160m" # PROMPT CHECKER ONLY CHECKED FOR GPT2 TOKENIZER; NEED TO UPDATE DATASET FUNC FOR NON-GPT2 MDOELS
+    model_name = "gpt2-small" # PROMPT CHECKER ONLY CHECKED FOR GPT2 TOKENIZER; NEED TO UPDATE DATASET FUNC FOR NON-GPT2 MDOELS
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
@@ -59,7 +59,6 @@ model.set_use_attn_result(True)
 
 DATASET_FUNC = generate_ioi_mr_random_prompts
 # %%
-
 PROMPTS, ANSWERS, ANSWER_INDICIES = DATASET_FUNC(model, 60)
 NUM_GROUPS = 3
 # %%
@@ -95,14 +94,14 @@ for i in range(NUM_GROUPS):
 
 
 # %%
-top_heads = topk_of_Nd_tensor(important_direct_effect[..., (int(important_direct_effect.shape[-1] / 2)):].mean(-1), 3)
+top_heads = topk_of_Nd_tensor(important_direct_effect.mean(-1), 3)
 
 # %%
 good_moving_layer = top_heads[0][0]
 good_moving_head = top_heads[0][1]
 # %%
 # CREATE GLOBAL PROMPTS FOR THE FOLLOWING TRAINING
-global_prompts_per_type = 700
+global_prompts_per_type = 200
 global_prompts, _, global_answer_idx = DATASET_FUNC(model, global_prompts_per_type)
 
 # %%
@@ -168,7 +167,7 @@ def generate_data_vectors(layer, head, model = model, device = device, prompts_p
     print(flattened_outputs.shape, flattened_labels.shape)
     return flattened_outputs, flattened_labels
 
-flattened_outputs, flattened_labels = generate_data_vectors(good_moving_layer, good_moving_head, prompts_per_type=1000)
+flattened_outputs, flattened_labels = generate_data_vectors(good_moving_layer, good_moving_head, prompts_per_type=global_prompts_per_type)
 # %%
 def preprocess_data(flattened_outputs, flattened_labels):
     # Convert Tensors to numpy arrays if necessary
@@ -196,7 +195,6 @@ def preprocess_data(flattened_outputs, flattened_labels):
     return train_outputs, test_outputs, train_labels, test_labels
 
 def train_classifier_on_ablation_sklearn(flattened_outputs, flattened_labels, model = model):
-    
     train_outputs, test_outputs, train_labels, test_labels = preprocess_data(flattened_outputs, flattened_labels)
     
     if train_outputs.shape[0] <= 100:
@@ -205,7 +203,7 @@ def train_classifier_on_ablation_sklearn(flattened_outputs, flattened_labels, mo
 
 
     # Train the classifier
-    c
+    classifier = LogisticRegression(max_iter=1000)
     classifier.fit(train_outputs, train_labels)
     
     # Predict and calculate accuracy on training set
@@ -396,7 +394,7 @@ dataset = utils.get_dataset("owt")
 dataset_name = "owt"
 # %%
 BATCH_SIZE = 100
-PROMPT_LEN = 100
+PROMPT_LEN = 500
 
 all_owt_tokens = model.to_tokens(dataset[0:BATCH_SIZE * 2]["text"]).to(device)
 owt_tokens = all_owt_tokens[0:BATCH_SIZE][:, :PROMPT_LEN]
@@ -421,7 +419,7 @@ def get_outputs(layer, head, clean_tokens: Float[Tensor, "batch pos"]):
     model.reset_hooks()
     return storage[0][..., head, :]
 # %%
-SUBBATCH_SIZE = 50
+SUBBATCH_SIZE = 100
 random_permutation = torch.randperm(owt_tokens.shape[0])
 new_tokens = owt_tokens[random_permutation[0:SUBBATCH_SIZE]]
 outputs: Float[Tensor, "batch pos d_model"] = get_outputs(good_moving_layer, good_moving_head, new_tokens)
@@ -439,9 +437,8 @@ PROMPT_LEN = new_tokens.shape[-1]
 outputs = get_outputs(good_moving_layer, good_moving_head, new_tokens)
 
 
-
-flattened_outputs = einops.rearrange(outputs, "batch pos d_model -> (batch pos) d_model")
 # %%
+flattened_outputs = einops.rearrange(outputs, "batch pos d_model -> (batch pos) d_model")
 predictions = classifier.predict_proba(flattened_outputs.cpu().numpy())
 reshaped_predictions = einops.rearrange(predictions, "(batch pos) num_classes -> batch pos num_classes", batch = SUBBATCH_SIZE, pos = PROMPT_LEN)
 # %%
@@ -450,7 +447,7 @@ chance_of_mr_mrs = reshaped_predictions[..., 1]
 chance_of_random = reshaped_predictions[..., 2]
 
 # %%
-top_ioi = topk_of_Nd_tensor(torch.tensor(chance_of_ioi), 20)
+top_ioi = topk_of_Nd_tensor(torch.tensor(chance_of_mr_mrs), 20)
 
 # %%
 for batch_idx in range(10):
