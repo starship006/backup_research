@@ -4,7 +4,10 @@ if we can classify head behaviors differently from this.
 
 
 this time we use the new dataset generation function, which should hopefully cover enough invariants to get a good measure
-about whether or not we are genuinely capturing something polysemantic
+about whether or not we are genuinely capturing something polysemantic.
+
+I end up:
+- training classifiers (MLP or logistic regression) that identify when heads are doing some activity, but these don't generalize to the complete distribution
 """
 
 # %%
