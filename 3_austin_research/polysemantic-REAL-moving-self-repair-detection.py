@@ -28,8 +28,7 @@ from sklearn.metrics import accuracy_score, classification_report
 from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from beartype import beartype as typechecker
 from sklearn.neighbors import KNeighborsClassifier
-
-
+from sklearn.neural_network import MLPClassifier
 # %%
 %load_ext autoreload
 %autoreload 2
@@ -59,7 +58,7 @@ model.set_use_attn_result(True)
 
 DATASET_FUNC = generate_ioi_mr_random_prompts
 # %%
-PROMPTS, ANSWERS, ANSWER_INDICIES = DATASET_FUNC(model, 60)
+PROMPTS, ANSWERS, ANSWER_INDICIES = DATASET_FUNC(model, 10)
 NUM_GROUPS = 3
 # %%
 clean_tokens: Float[Tensor, "batch pos"] = model.to_tokens(PROMPTS).to(device)
@@ -101,8 +100,8 @@ good_moving_layer = top_heads[0][0]
 good_moving_head = top_heads[0][1]
 # %%
 # CREATE GLOBAL PROMPTS FOR THE FOLLOWING TRAINING
-global_prompts_per_type = 200
-global_prompts, _, global_answer_idx = DATASET_FUNC(model, global_prompts_per_type)
+global_prompts_per_type = 3000
+#global_prompts, _, global_answer_idx = DATASET_FUNC(model, global_prompts_per_type)
 
 # %%
 @jaxtyped
@@ -125,39 +124,52 @@ def generate_data_vectors(layer, head, model = model, device = device, prompts_p
         where_to_store.append(item.clone())
 
 
-    model.reset_hooks()
-    storage = []
-    model.add_hook(utils.get_act_name("result", layer), partial(store_item_hook, where_to_store = storage))
     
-    if prompts_per_type == global_prompts_per_type:
-        prompts = global_prompts
-        answer_idx = global_answer_idx
-    else:
-        prompts, _, answer_idx = DATASET_FUNC(model, prompts_per_type)    
-
-
-    local_clean_tokens: Float[Tensor, "batch pos"] = model.to_tokens(prompts).to(device)
-    local_answer_token_idx: Float[Tensor, "batch"] = torch.tensor(answer_idx).to(device)
-
-    model.run_with_hooks(local_clean_tokens)
-    model.reset_hooks()
     
-    head_output_vectors: Float[Tensor, "batch pos d_model"] = storage[0][..., head, :] # get the outputs of an attentnion head 
-    expanded_indicies = einops.repeat(local_answer_token_idx, "b -> b 1 c", c = model.cfg.d_model)
     
-    flattened_outputs: Float[Tensor, "batch d_model"] = head_output_vectors.gather(1, expanded_indicies - 1).squeeze()
-    flattened_labels = torch.zeros(flattened_outputs.shape[0])
+    subbatch_size = 100
+    assert prompts_per_type % subbatch_size == 0
+
+    all_flattened_outputs = []
+    all_flattened_labels = []
+
+    for i in tqdm(range(prompts_per_type // subbatch_size)):
+        model.reset_hooks()
+        storage = []
+        model.add_hook(utils.get_act_name("result", layer), partial(store_item_hook, where_to_store = storage))
+        prompts, _, answer_idx = DATASET_FUNC(model, subbatch_size)    
 
 
-    
-    for i in range(NUM_GROUPS):
-        flattened_labels[(prompts_per_type * i):prompts_per_type * (i + 1)] = i
-    
+        local_clean_tokens: Float[Tensor, "batch pos"] = model.to_tokens(prompts).to(device)
+        local_answer_token_idx: Float[Tensor, "batch"] = torch.tensor(answer_idx).to(device)
 
-    # Quick test to ensure we gathered correct tensors
-    assert flattened_outputs[0].eq(head_output_vectors[0, answer_idx[0] - 1, :]).all()
-    assert flattened_outputs[1].eq(head_output_vectors[1, answer_idx[1] - 1, :]).all()
-    assert flattened_outputs[2].eq(head_output_vectors[2, answer_idx[2] - 1, :]).all()
+
+
+        model.run_with_hooks(local_clean_tokens)
+        model.reset_hooks()
+        
+        head_output_vectors: Float[Tensor, "batch pos d_model"] = storage[0][..., head, :] # get the outputs of an attentnion head 
+        expanded_indicies = einops.repeat(local_answer_token_idx, "b -> b 1 c", c = model.cfg.d_model)
+        
+        #print(local_clean_tokens.shape, head_output_vectors.shape, expanded_indicies.shape)
+        flattened_outputs: Float[Tensor, "batch d_model"] = head_output_vectors.gather(1, expanded_indicies - 1).squeeze()
+        flattened_labels = torch.zeros(flattened_outputs.shape[0])
+
+
+        # Quick test to ensure we gathered correct tensors
+        assert flattened_outputs[0].eq(head_output_vectors[0, answer_idx[0] - 1, :]).all()
+        assert flattened_outputs[1].eq(head_output_vectors[1, answer_idx[1] - 1, :]).all()
+        assert flattened_outputs[2].eq(head_output_vectors[2, answer_idx[2] - 1, :]).all()
+
+
+        for i in range(NUM_GROUPS):
+            flattened_labels[(subbatch_size * i):subbatch_size * (i + 1)] = i
+    
+        all_flattened_outputs.append(flattened_outputs)
+        all_flattened_labels.append(flattened_labels)
+
+    flattened_outputs = torch.cat(all_flattened_outputs, dim = 0)
+    flattened_labels = torch.cat(all_flattened_labels, dim = 0)
 
     # Test to ensure output and labels are the right size
     assert flattened_outputs.shape[0] == flattened_labels.shape[0]
@@ -203,7 +215,7 @@ def train_classifier_on_ablation_sklearn(flattened_outputs, flattened_labels, mo
 
 
     # Train the classifier
-    classifier = LogisticRegression(max_iter=1000)
+    classifier = MLPClassifier(hidden_layer_sizes=(100, 100), max_iter=1000, verbose=True)
     classifier.fit(train_outputs, train_labels)
     
     # Predict and calculate accuracy on training set

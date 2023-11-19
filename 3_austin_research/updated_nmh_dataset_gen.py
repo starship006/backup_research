@@ -443,7 +443,11 @@ def get_rand_item_unlike_prev(list_to_pull_from:list, prev_items: set):
             return item
 
 # %%
-def make_ioi_prompts(model, template_list: list, name_a_is_correct: bool, BATCH_SIZE = 50, noise = None):
+def make_ioi_prompts(model, template_list: list, name_a_is_correct: bool, BATCH_SIZE = 50, noise = None, empty_template = False):
+    """
+    BAD CODING NOTICE 1: empty_template meanas we are not passing any prompts with fillable names/objects/verbs in
+    
+    """
     # get a list of names that are one token only
     ONE_TOKEN_NAMES = []
     for name in NAMES:
@@ -452,8 +456,6 @@ def make_ioi_prompts(model, template_list: list, name_a_is_correct: bool, BATCH_
 
     assert model.to_tokens(ONE_TOKEN_NAMES, prepend_bos = False).shape[-1] == 1
 
-    
-    
     PROMPTS = []
     ANSWERS = []
     ANSWER_INDICIES = []
@@ -467,13 +469,17 @@ def make_ioi_prompts(model, template_list: list, name_a_is_correct: bool, BATCH_
         OBJECT = get_rand_item_unlike_prev(OBJECTS, set())
         PLACE = get_rand_item_unlike_prev(PLACES, set())
 
-        template = unfilled_template.format(
-            A = NAME_A,
-            B = NAME_B,
-            VERB = VERB,
-            OBJECT = OBJECT,
-            PLACE = PLACE
-        )
+
+        if empty_template:
+            template = ""
+        else:
+            template = unfilled_template.format(
+                A = NAME_A,
+                B = NAME_B,
+                VERB = VERB,
+                OBJECT = OBJECT,
+                PLACE = PLACE
+            )
 
         
         if noise is not None:
@@ -484,9 +490,11 @@ def make_ioi_prompts(model, template_list: list, name_a_is_correct: bool, BATCH_
         
         correct_name = NAME_A if name_a_is_correct else NAME_B
 
-        # check that the final token is the prediction of the token (this is what we will be measuring)
+        
         tokens = model.to_tokens(template, prepend_bos = False)[0]
-        assert tokens[-1] == model.to_tokens(correct_name, prepend_bos = False)[0]
+        # check that the final token is the prediction of the token (this is what we will be measuring)
+        if not empty_template:
+            assert tokens[-1] == model.to_tokens(correct_name, prepend_bos = False)[0]
 
         # add prompts and answers
         PROMPTS.append(template)
@@ -528,6 +536,9 @@ just_induction_templates = ["We talked to{A}{B}, who {VERB} the {OBJECT}. As{A}{
                         "They talked to{A}{B}, who {VERB} the {OBJECT}. Thus,{A}{B}}",
                         "I conversed with{A}{B}, who {VERB} the {OBJECT}. I told{A}{B}",
                         "I talked with{A}{B}, who {VERB} the {OBJECT}. Finally,{A}{B}"]
+
+
+nothing_template = [""]
 # %%
 #MR_PROMPTS, MR_ANSWERS, MR_ANSWER_INDICIES = make_ioi_prompts(ignore_mr_templates, False)
 # %%
@@ -573,7 +584,7 @@ def generate_ioi_mr_random_prompts(model, GROUP_SIZE = 50):
     BAAB_PROMPTS, BAAB_ANSWERS, BAAB_ANSWER_INDICIES = make_ioi_prompts(model, BAAB_TEMPLATES, False, BATCH_SIZE=GROUP_SIZE // 2, noise = all_owt_tokens)
     MR_PROMPTS, MR_ANSWERS, MR_ANSWER_INDICIES = make_ioi_prompts(model, ignore_mr_templates, False, BATCH_SIZE=GROUP_SIZE, noise = all_owt_tokens)
 
-    RANDOM_PROMPTS, RANDOM_ANSWERS, RANDOM_ANSWER_INDICIES = make_ioi_prompts(model, completely_random_prompts, False, BATCH_SIZE=GROUP_SIZE, noise = all_owt_tokens)
+    RANDOM_PROMPTS, RANDOM_ANSWERS, RANDOM_ANSWER_INDICIES = make_ioi_prompts(model, nothing_template, False, BATCH_SIZE=GROUP_SIZE, noise = all_owt_tokens, empty_template=True)
 
     return ABBA_PROMPTS + BAAB_PROMPTS + MR_PROMPTS + RANDOM_PROMPTS, ABBA_ANSWERS + BAAB_ANSWERS + MR_ANSWERS + RANDOM_ANSWERS, ABBA_ANSWER_INDICIES + BAAB_ANSWER_INDICIES + MR_ANSWER_INDICIES + RANDOM_ANSWER_INDICIES
 
