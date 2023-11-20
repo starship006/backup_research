@@ -589,6 +589,18 @@ def generate_ioi_mr_random_prompts(model, GROUP_SIZE = 50):
     return ABBA_PROMPTS + BAAB_PROMPTS + MR_PROMPTS + RANDOM_PROMPTS, ABBA_ANSWERS + BAAB_ANSWERS + MR_ANSWERS + RANDOM_ANSWERS, ABBA_ANSWER_INDICIES + BAAB_ANSWER_INDICIES + MR_ANSWER_INDICIES + RANDOM_ANSWER_INDICIES
 
 
+def generate_ioi_prompts(model, GROUP_SIZE = 50):
+    assert GROUP_SIZE % 2 == 0
+
+    
+    
+    ABBA_PROMPTS, ABBA_ANSWERS, ABBA_ANSWER_INDICIES = make_ioi_prompts(model, ABBA_TEMPLATES, True, BATCH_SIZE=GROUP_SIZE // 2, noise = None)
+    BAAB_PROMPTS, BAAB_ANSWERS, BAAB_ANSWER_INDICIES = make_ioi_prompts(model, BAAB_TEMPLATES, False, BATCH_SIZE=GROUP_SIZE // 2, noise = None)
+
+    return ABBA_PROMPTS + BAAB_PROMPTS, ABBA_ANSWERS + BAAB_ANSWERS, ABBA_ANSWER_INDICIES + BAAB_ANSWER_INDICIES
+
+
+
 def generate_ioi_mr_random_prompts_with_appended_noise(model, GROUP_SIZE = 50):
     assert GROUP_SIZE % 2 == 0
 

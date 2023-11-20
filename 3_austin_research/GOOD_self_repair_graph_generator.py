@@ -4,11 +4,12 @@ This code is responsible for making the 'thresholded self-repair' graphs.
 # %%
 from imports import *
 # %%
-%load_ext autoreload
-%autoreload 2
+#%load_ext autoreload
+#%autoreload 2
+
 from GOOD_helpers import *
 # %% Constants
-in_notebook_mode = True
+in_notebook_mode = False
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if in_notebook_mode:
     model_name = "gpt2-small"
@@ -43,8 +44,9 @@ assert owt_tokens.shape == corrupted_owt_tokens.shape == (BATCH_SIZE, PROMPT_LEN
 # %%
 logits, cache = model.run_with_cache(owt_tokens)
 # %%
-per_head_direct_effect, all_layer_direct_effect = collect_direct_effect(cache, correct_tokens=owt_tokens, model = model, display = True, collect_individual_neurons = False)
-show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)), title = "Direct Effect of Heads and MLP Layers")
+per_head_direct_effect, all_layer_direct_effect = collect_direct_effect(cache, correct_tokens=owt_tokens, model = model, display = in_notebook_mode, collect_individual_neurons = False)
+if in_notebook_mode:
+    show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)), title = "Direct Effect of Heads and MLP Layers")
 # %%
 def new_ld_upon_sample_ablation_calc(heads = None, mlp_layers = None, num_runs = 5):
     """
@@ -332,5 +334,5 @@ def gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cre, threshol
 # %%
 gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cil, thresholds, True, layout_horizontal=True)
 # %%
-create_layered_scatter(thresholded_de[0], thresholded_cil[0], model, "dr", "cre", "de vs cre",)
+#create_layered_scatter(thresholded_de[0], thresholded_cil[0], model, "dr", "cre", "de vs cre",)
 # %%

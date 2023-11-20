@@ -13,10 +13,8 @@ model_names = [
     "pythia-410m",
     "solu-12l-pile",
     "bert-base-cased",
-    
-
     #"NeelNanda/SoLU_12L1536W_C4_Code",
 ]
 
 for model_name in model_names:
-    subprocess.run(["python", "redo-self-repair-detection.py", "--model_name=" + model_name])
+    subprocess.run(["python", "GOOD_self_repair_graph_generator.py", "--model_name=" + model_name])

@@ -18,3 +18,14 @@ def zero_ablation_hook(
         # attention head
         attn_result[:, :, head_index_to_ablate, :] = torch.zeros(attn_result[:, :, head_index_to_ablate, :].shape)
     return attn_result
+
+
+
+
+def overwrite_activation_hook(
+        original_activation,
+        hook,
+        what_to_overwrite_with
+    ):
+        assert original_activation.shape == what_to_overwrite_with.shape
+        return what_to_overwrite_with
