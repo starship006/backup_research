@@ -332,7 +332,7 @@ def gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cre, threshol
 
     
 # %%
-gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cil, thresholds, True, layout_horizontal=True)
+gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cil, thresholds, True, layout_horizontal=False)
 # %%
 #create_layered_scatter(thresholded_de[0], thresholded_cil[0], model, "dr", "cre", "de vs cre",)
 # %%

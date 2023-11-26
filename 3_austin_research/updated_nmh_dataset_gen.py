@@ -446,7 +446,6 @@ def get_rand_item_unlike_prev(list_to_pull_from:list, prev_items: set):
 def make_ioi_prompts(model, template_list: list, name_a_is_correct: bool, BATCH_SIZE = 50, noise = None, empty_template = False):
     """
     BAD CODING NOTICE 1: empty_template meanas we are not passing any prompts with fillable names/objects/verbs in
-    
     """
     # get a list of names that are one token only
     ONE_TOKEN_NAMES = []
@@ -592,13 +591,17 @@ def generate_ioi_mr_random_prompts(model, GROUP_SIZE = 50):
 def generate_ioi_prompts(model, GROUP_SIZE = 50):
     assert GROUP_SIZE % 2 == 0
 
-    
-    
     ABBA_PROMPTS, ABBA_ANSWERS, ABBA_ANSWER_INDICIES = make_ioi_prompts(model, ABBA_TEMPLATES, True, BATCH_SIZE=GROUP_SIZE // 2, noise = None)
     BAAB_PROMPTS, BAAB_ANSWERS, BAAB_ANSWER_INDICIES = make_ioi_prompts(model, BAAB_TEMPLATES, False, BATCH_SIZE=GROUP_SIZE // 2, noise = None)
 
     return ABBA_PROMPTS + BAAB_PROMPTS, ABBA_ANSWERS + BAAB_ANSWERS, ABBA_ANSWER_INDICIES + BAAB_ANSWER_INDICIES
 
+def generate_singular_ioi_prompt_type(model, GROUP_SIZE = 50):
+    
+    ABBA_PROMPTS, ABBA_ANSWERS, ABBA_ANSWER_INDICIES = make_ioi_prompts(model,  [ABBA_TEMPLATES[0]], True, BATCH_SIZE=GROUP_SIZE // 2, noise = None)
+    BAAB_PROMPTS, BAAB_ANSWERS, BAAB_ANSWER_INDICIES = make_ioi_prompts(model,  [BAAB_TEMPLATES[0]], False, BATCH_SIZE=GROUP_SIZE // 2, noise = None)
+
+    return ABBA_PROMPTS + BAAB_PROMPTS, ABBA_ANSWERS + BAAB_ANSWERS, ABBA_ANSWER_INDICIES + BAAB_ANSWER_INDICIES
 
 
 def generate_ioi_mr_random_prompts_with_appended_noise(model, GROUP_SIZE = 50):

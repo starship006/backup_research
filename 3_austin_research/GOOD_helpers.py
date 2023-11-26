@@ -28,7 +28,7 @@ def residual_stack_to_direct_effect(
 
 
 def collect_direct_effect(de_cache: ActivationCache = None, correct_tokens: Float[Tensor, "batch seq_len"] = None, model: HookedTransformer = None, 
-                           title = "Direct Effect of Heads", display = True, collect_individual_neurons = False) -> Tuple[Float[Tensor, "n_layer n_head batch pos_minus_one"], Float[Tensor, "n_layer batch pos_minus_one"]]:#, Float[Tensor, "n_layer d_mlp batch pos_minus_one"]]:
+                           title = "Direct Effect of Heads", display = True, collect_individual_neurons = False, cache_for_scaling: ActivationCache = None) -> Tuple[Float[Tensor, "n_layer n_head batch pos_minus_one"], Float[Tensor, "n_layer batch pos_minus_one"]]:#, Float[Tensor, "n_layer d_mlp batch pos_minus_one"]]:
     """
     Given a cache of activations, and a set of correct tokens, returns the direct effect of each head and neuron on each token.
     
@@ -38,6 +38,7 @@ def collect_direct_effect(de_cache: ActivationCache = None, correct_tokens: Floa
     correct_tokens: [batch, seq_len] tensor of correct tokens
     title: title of the plot (relavant if display == True)
     display: whether to display the plot or return the data; if False, returns [head, pos] tensor of direct effects
+    cache_for_scaling: the cache to use for the scaling; defaults to the global clean cache
     """
 
     device = "cuda" if correct_tokens.get_device() >= 0 else "cpu"
@@ -45,13 +46,16 @@ def collect_direct_effect(de_cache: ActivationCache = None, correct_tokens: Floa
     if de_cache is None or correct_tokens is None or model is None:
         raise ValueError("de_cache, correct_tokens, and model must not be None")
 
+    if cache_for_scaling is None:
+        cache_for_scaling = de_cache
+
     token_residual_directions: Float[Tensor, "batch seq_len d_model"] = model.tokens_to_residual_directions(correct_tokens)
     
     # get the direct effect of heads by positions
     clean_per_head_residual: Float[Tensor, "head batch seq d_model"] = de_cache.stack_head_results(layer = -1, return_labels = False, apply_ln = False)
     
     #print(clean_per_head_residual.shape)
-    per_head_direct_effect: Float[Tensor, "heads batch pos_minus_one"] = residual_stack_to_direct_effect(clean_per_head_residual, token_residual_directions, True, scaling_cache = de_cache)
+    per_head_direct_effect: Float[Tensor, "heads batch pos_minus_one"] = residual_stack_to_direct_effect(clean_per_head_residual, token_residual_directions, True, scaling_cache = cache_for_scaling)
     
     
     per_head_direct_effect = einops.rearrange(per_head_direct_effect, "(n_layer n_head) batch pos -> n_layer n_head batch pos", n_layer = model.cfg.n_layers, n_head = model.cfg.n_heads)
@@ -64,13 +68,13 @@ def collect_direct_effect(de_cache: ActivationCache = None, correct_tokens: Floa
     if collect_individual_neurons:
         for neuron in tqdm(range(model.cfg.d_mlp)):
             single_neuron_output: Float[Tensor, "n_layer batch pos d_model"] = de_cache.stack_neuron_results(layer = -1, neuron_slice = (neuron, neuron + 1), return_labels = False, apply_ln = False)
-            direct_effect_mlp[:, neuron, :, :] = residual_stack_to_direct_effect(single_neuron_output, token_residual_directions, scaling_cache = de_cache)
+            direct_effect_mlp[:, neuron, :, :] = residual_stack_to_direct_effect(single_neuron_output, token_residual_directions, scaling_cache = cache_for_scaling)
     # get per mlp layer effect
     all_layer_output: Float[Tensor, "n_layer batch pos d_model"] = torch.zeros((model.cfg.n_layers, correct_tokens.shape[0], correct_tokens.shape[1], model.cfg.d_model)).to(device)
     for layer in range(model.cfg.n_layers):
         all_layer_output[layer, ...] = de_cache[f'blocks.{layer}.hook_mlp_out']
 
-    all_layer_direct_effect: Float["n_layer batch pos_minus_one"] = residual_stack_to_direct_effect(all_layer_output, token_residual_directions, scaling_cache = de_cache)
+    all_layer_direct_effect: Float["n_layer batch pos_minus_one"] = residual_stack_to_direct_effect(all_layer_output, token_residual_directions, scaling_cache = cache_for_scaling)
 
 
     if display:    
@@ -267,5 +271,61 @@ def create_layered_scatter(
 
     fig.show()
 
+def topk_of_Nd_tensor(tensor: Float[Tensor, "rows cols"], k: int):
+    '''
+    Helper function: does same as tensor.topk(k).indices, but works over 2D tensors.
+    Returns a list of indices, i.e. shape [k, tensor.ndim].
+
+    Example: if tensor is 2D array of values for each head in each layer, this will
+    return a list of heads.
+    '''
+    i = torch.topk(tensor.flatten(), k).indices
+    return np.array(np.unravel_index(utils.to_numpy(i), tensor.shape)).T.tolist()
 
 
+def get_projection(from_vector: Float[Tensor, "batch d_model"], to_vector: Float[Tensor, "batch d_model"]) -> Float[Tensor, "batch d_model"]:
+    assert from_vector.shape == to_vector.shape
+    assert from_vector.ndim == 2
+    
+    dot_product = einops.einsum(from_vector, to_vector, "batch d_model, batch d_model -> batch")
+    length_of_from_vector = einops.einsum(from_vector, from_vector, "batch d_model, batch d_model -> batch")
+    length_of_vector = einops.einsum(to_vector, to_vector, "batch d_model, batch d_model -> batch")
+    
+
+    projected_lengths = (dot_product) / (length_of_vector)
+    projections = to_vector * einops.repeat(projected_lengths, "batch -> batch d_model", d_model = to_vector.shape[-1])
+    return projections
+
+
+
+
+
+# %% Code to first intervene by subtracting output in residual stream
+def add_vector_to_resid(
+    original_resid_stream: Float[Tensor, "batch seq d_model"],
+    hook: HookPoint,
+    vector: Float[Tensor, "batch d_model"],
+    positions = Float[Tensor, "batch"],
+) -> Float[Tensor, "batch n_head pos pos"]:
+    '''
+    Hook that adds vector into residual stream at position
+    '''
+    assert len(original_resid_stream.shape) == 3
+    assert len(vector.shape) == 2
+    assert original_resid_stream.shape[0] == vector.shape[0]
+    assert original_resid_stream.shape[2] == vector.shape[1]
+    
+    
+    
+    
+    expanded_positions = einops.repeat(positions, "batch -> batch 1 d_model", d_model = vector.shape[1])
+    resid_stream_at_pos = torch.gather(original_resid_stream, 1, expanded_positions)
+    resid_stream_at_pos = einops.rearrange(resid_stream_at_pos, "batch 1 d_model -> batch d_model")
+    
+    print(resid_stream_at_pos.shape)
+    print(vector.shape)
+    resid_stream_at_pos = resid_stream_at_pos + vector
+    for i in range(original_resid_stream.shape[0]):
+        original_resid_stream[i, positions[i], :] = resid_stream_at_pos[i]
+    return original_resid_stream
+# %%

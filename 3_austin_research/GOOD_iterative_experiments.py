@@ -1,15 +1,17 @@
 """
-This code tests the hypothesis that moving the residual stream from layer NMH layer to downstream layer causes one layer down to more name moving.
+Goals with this research direction:
+- Flesh out the hypothesis that model's are iterative, and test to what extent this is true
+- If this is indeed the case, find a way to tie it back to backup and self-repair
 """
 # %%
 from imports import *
-from updated_nmh_dataset_gen import generate_ioi_prompts
-from GOOD_helpers import collect_direct_effect
+from updated_nmh_dataset_gen import generate_singular_ioi_prompt_type, generate_ioi_prompts
+from GOOD_helpers import *
 from reused_hooks import overwrite_activation_hook
 # %%
 %load_ext autoreload
 %autoreload 2
-from GOOD_helpers import *
+
 # %% Constants
 in_notebook_mode = True
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -20,7 +22,7 @@ else:
     parser.add_argument('--model_name', default='gpt2-small')
     args = parser.parse_args()
     model_name = args.model_name
-
+    
 
 # %%
 safe_model_name = model_name.replace("/", "_")
@@ -34,7 +36,7 @@ model = HookedTransformer.from_pretrained(
 )
 model.set_use_attn_result(True)
 # %%
-PROMPTS, ANSWERS, ANSWER_INDICIES = generate_ioi_prompts(model, 30)
+PROMPTS, ANSWERS, ANSWER_INDICIES = generate_singular_ioi_prompt_type(model, 30)
 # %%
 clean_tokens: Float[Tensor, "batch pos"] = model.to_tokens(PROMPTS).to(device)
 answer_tokens: Float[Tensor, "batch 1"] = model.to_tokens(ANSWERS, prepend_bos=False).to(device)
@@ -48,14 +50,13 @@ assert torch.all(torch.eq(answer_tokens, indexed_answers))
 # %%
 logits, cache = model.run_with_cache(clean_tokens)
 # %%
-# %% First, see which heads in the model are even useful for predicting these
+# %% First, see which heads in the model are even useful for predicting these (across ALL positions_)
 per_head_direct_effect, all_layer_direct_effect = collect_direct_effect(cache, correct_tokens=clean_tokens,model = model,
                                                                         display=in_notebook_mode)
 
 if in_notebook_mode:
     show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)), title = "Direct Effect of Heads and MLP Layers")
-# %% Get the prediction of the names
-
+# %% Check for name prediction
 def get_name_direct_effects(per_head_direct_effect, all_layer_direct_effect, answer_token_idx):
     expanded_indicies = einops.repeat(answer_token_idx, "b -> a c b 1", a = model.cfg.n_layers, c = model.cfg.n_heads)
     important_direct_effect: Float[Tensor, "layer head batch"] = per_head_direct_effect.gather(-1, expanded_indicies - 1).squeeze()
@@ -70,37 +71,33 @@ important_direct_effect, important_direct_effect_mlp = get_name_direct_effects(p
 if in_notebook_mode:
     show_input(important_direct_effect.mean((-1)), important_direct_effect_mlp.mean((-1)), title = "Direct Effect of Heads and MLP Layers on predicting Name")
 
-# %%
-def run_forward_pass_and_copy_layer(from_activation: str, to_activation: str):
+# %% Isolate the output of a single head
+top_head = topk_of_Nd_tensor(important_direct_effect.mean((-1)), 1)
+top_head: tuple = (top_head[0][0], top_head[0][1])
+
+
+head_out: Float[Tensor, "batch pos d_model"] = cache[utils.get_act_name("result", top_head[0])][..., top_head[1], :]
+expanded_pre_answer_indicies = einops.repeat(answer_token_idx - 1, "batch -> batch 1 d_model", d_model = model.cfg.d_model)
+target_head_out: Float[Tensor, "batch d_model"] = head_out.gather(-2, expanded_pre_answer_indicies).squeeze()
+
+def run_forward_pass_and_copy_layer(resid_layer_to_add: int, vector: Float[Tensor, "batch d_model"], scaling = 1):
     """
-    does a forwawrd pass but copies the residuals tream from one activation to another
+    does a forwawrd pass but adds scaled version of a vector to at resid_pre_{resid_layer_to_add} multiplied by some sort of scaling
     """
 
-    from_activation = cache[from_activation]
+    
     model.reset_hooks()
-    model.add_hook(to_activation, partial(overwrite_activation_hook, what_to_overwrite_with=from_activation))
+    model.add_hook(utils.get_act_name("resid_pre", resid_layer_to_add), partial(add_vector_to_resid, vector = vector * scaling, positions = answer_token_idx - 1))
     
     new_logits, new_cache = model.run_with_cache(clean_tokens)
     model.reset_hooks()
     return new_logits, new_cache
-# %% Have the from layer be the layer with the most direct effect
-from_layer = important_direct_effect.sum((-1,-2)).argmax().item()
-to_layer = from_layer + 1
-
-from_act = utils.get_act_name("resid_pre", from_layer)
-to_act = utils.get_act_name("resid_pre", to_layer)
-
-if to_layer >= model.cfg.n_layers:
-    print("welp seems like the last layer is the one to emphasize this, ignore all of this then LOL")
-
 # %%
-moved_logits, moved_cache = run_forward_pass_and_copy_layer(from_act, to_act)
-# %%
-moved_per_head_direct_effect, moved_all_layer_direct_effect = collect_direct_effect(moved_cache, correct_tokens=clean_tokens,model = model,
-                                                                        display=in_notebook_mode)
-moved_important_direct_effect, moved_important_direct_effect_mlp = get_name_direct_effects(moved_per_head_direct_effect, moved_all_layer_direct_effect, answer_token_idx)
-# %%
-if in_notebook_mode:
-    show_input(moved_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1)),
-                moved_important_direct_effect_mlp.mean((-1)) - important_direct_effect_mlp.mean((-1)), title = f"Change in DE when copying from {from_act} to {to_act}")
+ablated_logits, ablated_cache = run_forward_pass_and_copy_layer(top_head[0] + 1, target_head_out, scaling = 1)
+ablated_important_direct_effect, ablated_important_direct_effect_mlp = get_name_direct_effects(*collect_direct_effect(ablated_cache, correct_tokens=clean_tokens,model = model,
+                                                                        display=in_notebook_mode), answer_token_idx)
+
+show_input(ablated_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1)), 
+           ablated_important_direct_effect_mlp.mean((-1)) -  important_direct_effect_mlp.mean((-1)),
+           title = f"Difference in Direct Effect of Heads and MLP Layers on predicting Name when adding scaling={1} output of head {top_head}")
 # %%
