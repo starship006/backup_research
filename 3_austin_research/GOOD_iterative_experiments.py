@@ -16,7 +16,7 @@ from reused_hooks import overwrite_activation_hook
 in_notebook_mode = True
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if in_notebook_mode:
-    model_name = "gpt2-small"
+    model_name = "pythia-160m"
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
@@ -67,18 +67,17 @@ def get_name_direct_effects(per_head_direct_effect, all_layer_direct_effect, ans
 
 
 important_direct_effect, important_direct_effect_mlp = get_name_direct_effects(per_head_direct_effect, all_layer_direct_effect, answer_token_idx)
-# %%
+
 if in_notebook_mode:
     show_input(important_direct_effect.mean((-1)), important_direct_effect_mlp.mean((-1)), title = "Direct Effect of Heads and MLP Layers on predicting Name")
 
 # %% Isolate the output of a single head
-top_head = topk_of_Nd_tensor(important_direct_effect.mean((-1)), 1)
-top_head: tuple = (top_head[0][0], top_head[0][1])
+top_heads = topk_of_Nd_tensor(important_direct_effect.mean((-1)), 5)
+top_head: tuple = (top_heads[0][0], top_heads[0][1])
+second_head: tuple = (top_heads[1][0], top_heads[1][1])
 
 
-head_out: Float[Tensor, "batch pos d_model"] = cache[utils.get_act_name("result", top_head[0])][..., top_head[1], :]
-expanded_pre_answer_indicies = einops.repeat(answer_token_idx - 1, "batch -> batch 1 d_model", d_model = model.cfg.d_model)
-target_head_out: Float[Tensor, "batch d_model"] = head_out.gather(-2, expanded_pre_answer_indicies).squeeze()
+
 
 def run_forward_pass_and_copy_layer(resid_layer_to_add: int, vector: Float[Tensor, "batch d_model"], scaling = 1):
     """
@@ -93,11 +92,37 @@ def run_forward_pass_and_copy_layer(resid_layer_to_add: int, vector: Float[Tenso
     model.reset_hooks()
     return new_logits, new_cache
 # %%
-ablated_logits, ablated_cache = run_forward_pass_and_copy_layer(top_head[0] + 1, target_head_out, scaling = 1)
-ablated_important_direct_effect, ablated_important_direct_effect_mlp = get_name_direct_effects(*collect_direct_effect(ablated_cache, correct_tokens=clean_tokens,model = model,
-                                                                        display=in_notebook_mode), answer_token_idx)
 
-show_input(ablated_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1)), 
-           ablated_important_direct_effect_mlp.mean((-1)) -  important_direct_effect_mlp.mean((-1)),
-           title = f"Difference in Direct Effect of Heads and MLP Layers on predicting Name when adding scaling={1} output of head {top_head}")
+def add_vector_resid_see_change(head: tuple, scaling = 1, layer = None, display_change = True):
+    """
+    given a head, adds the output vectors of the head on the positions predicting the name, and then outputs the difference in the direct effect of the heads and the mlp layers
+    
+    if layer is None, then it will add the vector to the next layer
+    """
+    
+    if layer is None:
+        layer = head[0] + 1
+    
+    head_out: Float[Tensor, "batch pos d_model"] = cache[utils.get_act_name("result", head[0])][..., head[1], :]
+    expanded_pre_answer_indicies = einops.repeat(answer_token_idx - 1, "batch -> batch 1 d_model", d_model = model.cfg.d_model)
+    target_head_out: Float[Tensor, "batch d_model"] = head_out.gather(-2, expanded_pre_answer_indicies).squeeze()
+
+
+    ablated_logits, ablated_cache = run_forward_pass_and_copy_layer(layer, target_head_out, scaling = scaling)
+    ablated_important_direct_effect, ablated_important_direct_effect_mlp = get_name_direct_effects(*collect_direct_effect(ablated_cache, correct_tokens=clean_tokens,model = model,
+                                                                        display=False, cache_for_scaling=cache), answer_token_idx)
+
+    if display_change:
+        head_de = ablated_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1))
+        mlp_de = ablated_important_direct_effect_mlp.mean((-1)) -  important_direct_effect_mlp.mean((-1))
+        title = f"Difference in Direct Effect of Heads and MLP Layers on predicting Name when adding scaling={scaling} output of head {head}"
+    else:
+        head_de = ablated_important_direct_effect.mean((-1))
+        mlp_de = ablated_important_direct_effect_mlp.mean((-1))
+        title = f"Direct Effect of Heads and MLP Layers on predicting Name when adding scaling={scaling} output of head {head}"
+    
+        
+    show_input(head_de, mlp_de, title = title)
+
+add_vector_resid_see_change(second_head, -3, second_head[0], True)
 # %%

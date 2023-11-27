@@ -14,7 +14,7 @@ from GOOD_helpers import *
 in_notebook_mode = True
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if in_notebook_mode:
-    model_name = "gpt2-small"
+    model_name = "pythia-160m"
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
@@ -97,10 +97,36 @@ if to_layer >= model.cfg.n_layers:
 moved_logits, moved_cache = run_forward_pass_and_copy_layer(from_act, to_act)
 # %%
 moved_per_head_direct_effect, moved_all_layer_direct_effect = collect_direct_effect(moved_cache, correct_tokens=clean_tokens,model = model,
-                                                                        display=in_notebook_mode)
+                                                                        display=in_notebook_mode, cache_for_scaling=cache)
 moved_important_direct_effect, moved_important_direct_effect_mlp = get_name_direct_effects(moved_per_head_direct_effect, moved_all_layer_direct_effect, answer_token_idx)
 # %%
 if in_notebook_mode:
     show_input(moved_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1)),
                 moved_important_direct_effect_mlp.mean((-1)) - important_direct_effect_mlp.mean((-1)), title = f"Change in DE when copying from {from_act} to {to_act}")
+# %%
+sum = moved_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1))
+print(sum.sum(-1))
+# %% Ablate the normal head with something random
+
+# %%
+owt_dataset = utils.get_dataset("owt")
+owt_dataset_name = "owt"
+# %%
+batch_size = clean_tokens.shape[0]
+prompt_len = clean_tokens.shape[1]
+
+all_owt_tokens = model.to_tokens(owt_dataset[0:(batch_size * 2)]["text"]).to(device)
+owt_tokens = all_owt_tokens[0:batch_size][:, :prompt_len]
+corrupted_owt_tokens = all_owt_tokens[batch_size:batch_size * 2][:, :prompt_len]
+assert owt_tokens.shape == corrupted_owt_tokens.shape == (batch_size, prompt_len)
+# %%
+nodes = [Node("z", 8, 10)]
+new_cache = act_patch(model, clean_tokens, nodes, return_item, owt_tokens, apply_metric_to_cache=True)
+ablated_per_head_direct_effect, ablated_all_layer_direct_effect = collect_direct_effect(new_cache, correct_tokens=clean_tokens,model = model,
+                                                                                        title = "ablated DE", display=in_notebook_mode, cache_for_scaling=cache)
+ablated_important_direct_effect, ablated_important_direct_effect_mlp = get_name_direct_effects(ablated_per_head_direct_effect, ablated_all_layer_direct_effect, answer_token_idx)
+# %%
+if in_notebook_mode:
+    show_input(ablated_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1)),
+                ablated_important_direct_effect_mlp.mean((-1)) - important_direct_effect_mlp.mean((-1)), title = f"Change in DE when ablating head")
 # %%
