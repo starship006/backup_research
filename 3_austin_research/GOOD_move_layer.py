@@ -14,7 +14,7 @@ from GOOD_helpers import *
 in_notebook_mode = True
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if in_notebook_mode:
-    model_name = "pythia-160m"
+    model_name = "pythia-1b-deduped"
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
@@ -39,6 +39,7 @@ PROMPTS, ANSWERS, ANSWER_INDICIES = generate_ioi_prompts(model, 30)
 clean_tokens: Float[Tensor, "batch pos"] = model.to_tokens(PROMPTS).to(device)
 answer_tokens: Float[Tensor, "batch 1"] = model.to_tokens(ANSWERS, prepend_bos=False).to(device)
 answer_token_idx: Float[Tensor, "batch"] = torch.tensor(ANSWER_INDICIES).to(device)
+
 # %%
 # See if the answer_token_idx is correct
 unsqueezed_answers_idx = answer_token_idx.unsqueeze(-1)
@@ -92,6 +93,9 @@ to_act = utils.get_act_name("resid_pre", to_layer)
 
 if to_layer >= model.cfg.n_layers:
     print("welp seems like the last layer is the one to emphasize this, ignore all of this then LOL")
+else:
+    print(f"We are ablating from {from_layer} to {to_layer}")
+
 
 # %%
 moved_logits, moved_cache = run_forward_pass_and_copy_layer(from_act, to_act)
@@ -104,8 +108,15 @@ if in_notebook_mode:
     show_input(moved_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1)),
                 moved_important_direct_effect_mlp.mean((-1)) - important_direct_effect_mlp.mean((-1)), title = f"Change in DE when copying from {from_act} to {to_act}")
 # %%
-sum = moved_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1))
-print(sum.sum(-1))
+move_layer_diff = moved_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1))
+print(move_layer_diff.sum(-1))
+print(move_layer_diff.sum(-1)[to_layer])
+
+
+important_layer_change_from_move_layer = move_layer_diff[to_layer]
+
+# %%
+
 # %% Ablate the normal head with something random
 
 # %%
@@ -120,7 +131,11 @@ owt_tokens = all_owt_tokens[0:batch_size][:, :prompt_len]
 corrupted_owt_tokens = all_owt_tokens[batch_size:batch_size * 2][:, :prompt_len]
 assert owt_tokens.shape == corrupted_owt_tokens.shape == (batch_size, prompt_len)
 # %%
-nodes = [Node("z", 8, 10)]
+top_head = topk_of_Nd_tensor(important_direct_effect.mean((-1)), 1)[0]
+
+assert top_head[0] == from_layer
+
+nodes = [Node("z", top_head[0], top_head[1])]
 new_cache = act_patch(model, clean_tokens, nodes, return_item, owt_tokens, apply_metric_to_cache=True)
 ablated_per_head_direct_effect, ablated_all_layer_direct_effect = collect_direct_effect(new_cache, correct_tokens=clean_tokens,model = model,
                                                                                         title = "ablated DE", display=in_notebook_mode, cache_for_scaling=cache)
@@ -129,4 +144,14 @@ ablated_important_direct_effect, ablated_important_direct_effect_mlp = get_name_
 if in_notebook_mode:
     show_input(ablated_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1)),
                 ablated_important_direct_effect_mlp.mean((-1)) - important_direct_effect_mlp.mean((-1)), title = f"Change in DE when ablating head")
+# %%
+ablation_diff = ablated_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1))
+print(ablation_diff.sum(-1))
+print(ablation_diff.sum(-1)[to_layer])
+
+
+change_from_ablation = ablation_diff[to_layer]
+# %% 
+
+px.scatter(x = important_layer_change_from_move_layer.cpu(), y = change_from_ablation.cpu(), labels = {"x": "Change in DE from moving layer", "y": "Change in DE from ablating head"})
 # %%
