@@ -4,19 +4,20 @@ Goals with this research direction:
 """
 # %%
 import sys
+from enum import Enum
 # %%
 from imports import *
 from GOOD_helpers import *
 from reused_hooks import overwrite_activation_hook
 # %%
-%load_ext autoreload
-%autoreload 2
+#%load_ext autoreload
+#%autoreload 2
 
 # %% Constants
-in_notebook_mode = True
+in_notebook_mode = False
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if in_notebook_mode:
-    model_name = "gpt2-small"
+    model_name = "pythia-160m"
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
@@ -36,8 +37,8 @@ model = HookedTransformer.from_pretrained(
 )
 model.set_use_attn_result(True)
 # %%
-batch_size = 20
-prompt_len = 30
+batch_size = 40
+prompt_len = 40
 
 owt_dataset = utils.get_dataset("owt")
 owt_dataset_name = "owt"    
@@ -58,63 +59,98 @@ per_head_direct_effect, all_layer_direct_effect = collect_direct_effect(cache, c
 if in_notebook_mode:
     show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)), title = "Direct Effect of Heads and MLP Layers")
 
+
 # %%
-SCALING = 1
-OUTPUT_WITH_RANDOM_HEAD = False
-OUTPUT_WITH_RANDOM_DIRECTION = True
+global_top_head = topk_of_Nd_tensor(per_head_direct_effect.mean((-1,-2)), 1)[0]
+
+# %%
+class output_source(Enum):
+    WITH_SAME_AS_RECEIVING_HEAD = 1
+    WITH_RANDOM_HEAD = 2
+    WITH_RANDOM_DIRECTION = 3
+    WITH_FIXED_GLOBAL_TOP_HEAD = 4
+
+class receiving_source(Enum):
+    WITH_TOP_HEAD = 1
+    WITH_FIXED_GLOBAL_TOP_HEAD = 2
+    WITH_CUSTOM_HEAD = 3
 
 
-original_de = torch.zeros((batch_size, prompt_len - 1))
-new_de = torch.zeros((batch_size, prompt_len - 1))
-for batch in range(batch_size):
-    for pos in range(prompt_len - 1):
-        direct_effects = per_head_direct_effect[..., batch, pos]
-        top_head = topk_of_Nd_tensor(direct_effects, 1)[0]
-        
-
-        # test what happens when you take its output and feed it back into itself
-        if OUTPUT_WITH_RANDOM_HEAD:
-            output_head = (torch.randint(0, model.cfg.n_layers, (1,)).item(), torch.randint(0, model.cfg.n_heads, (1,)).item())
-        else:
-            output_head = top_head
-        head_out: Float[Tensor, "d_model"] = cache[utils.get_act_name("result", output_head[0])][batch, pos, output_head[1], :]
-        if OUTPUT_WITH_RANDOM_DIRECTION:
-            rand_dir =  torch.randn(model.cfg.d_model).to(device)
-            head_out = (rand_dir / rand_dir.norm()) * head_out.norm()
-        
-        repeated_head_out = einops.repeat(head_out, "d_model -> batch d_model", batch = batch_size).to(device)
-        
-        model.reset_hooks()
-        model.add_hook(utils.get_act_name("resid_pre", top_head[0]), partial(add_vector_to_resid, vector = repeated_head_out * SCALING, positions = pos))
-        new_logits, new_cache = model.run_with_cache(clean_tokens)
-        model.reset_hooks()
-        
-        
-        # see if the direct effect of the head has changed
-        new_per_head_direct_effect, new_all_layer_direct_effect = collect_direct_effect(new_cache, correct_tokens=clean_tokens,
-                                                                            model = model, display=False)
-        
-        #print(f"Diff in DE of {top_head} = " + str((new_per_head_direct_effect - per_head_direct_effect)[top_head[0], top_head[1], batch, pos].item()) + "| OG = " + str(per_head_direct_effect[top_head[0], top_head[1], batch, pos].item()))
-        original_de[batch, pos] = (per_head_direct_effect)[top_head[0], top_head[1], batch, pos].item()
-        new_de[batch, pos] = (new_per_head_direct_effect)[top_head[0], top_head[1], batch, pos].item()
+def analyze_head(output_type, receiving_type, scaling, custom_head = None):
+    original_de = torch.zeros((batch_size, prompt_len - 1))
+    new_de = torch.zeros((batch_size, prompt_len - 1))
+    receive_heads = []
     
+    for batch in range(batch_size):
+        for pos in range(prompt_len - 1):
+            direct_effects = per_head_direct_effect[..., batch, pos]
+            
+            if receiving_type == receiving_source.WITH_FIXED_GLOBAL_TOP_HEAD:
+                receiving_head = global_top_head
+            elif receiving_type == receiving_source.WITH_TOP_HEAD:
+                receiving_head = topk_of_Nd_tensor(direct_effects, 1)[0]
+            elif receiving_type == receiving_source.WITH_CUSTOM_HEAD:
+                if custom_head is None:
+                    raise Exception("Must provide custom_head if receiving_type is WITH_CUSTOM_HEAD")
+                receiving_head = custom_head
+            else:
+                raise Exception("Invalid receiving_type")
+            
+            # test what happens when you take its output and feed it back into itself
+            if output_type == output_source.WITH_RANDOM_HEAD:
+                output_head = (torch.randint(0, model.cfg.n_layers, (1,)).item(), torch.randint(0, model.cfg.n_heads, (1,)).item())
+                head_out: Float[Tensor, "d_model"] = cache[utils.get_act_name("result", output_head[0])][batch, pos, output_head[1], :]
+            elif output_type == output_source.WITH_SAME_AS_RECEIVING_HEAD:
+                output_head = receiving_head
+                head_out: Float[Tensor, "d_model"] = cache[utils.get_act_name("result", output_head[0])][batch, pos, output_head[1], :]
+            elif output_type == output_source.WITH_RANDOM_DIRECTION:
+                temp_output_head = receiving_head
+                temp_head_out: Float[Tensor, "d_model"] = cache[utils.get_act_name("result", temp_output_head[0])][batch, pos, temp_output_head[1], :]
+                rand_dir =  torch.randn(model.cfg.d_model).to(device)
+                head_out: Float[Tensor, "d_model"] = (rand_dir / rand_dir.norm()) * temp_head_out.norm()
+            elif output_type == output_source.WITH_FIXED_GLOBAL_TOP_HEAD:
+                head_out: Float[Tensor, "d_model"] = cache[utils.get_act_name("result", global_top_head[0])][batch, pos, global_top_head[1], :]
+            else:
+                raise Exception("Invalid output_type")
+            
+            
+            repeated_head_out = einops.repeat(head_out, "d_model -> batch d_model", batch = batch_size).to(device)
+            model.reset_hooks()
+            model.add_hook(utils.get_act_name("resid_pre", receiving_head[0]), partial(add_vector_to_resid, vector = repeated_head_out * scaling, positions = pos))
+            new_logits, new_cache = model.run_with_cache(clean_tokens)
+            model.reset_hooks()
+            
+            
+            # see if the direct effect of the head has changed
+            new_per_head_direct_effect, new_all_layer_direct_effect = collect_direct_effect(new_cache, correct_tokens=clean_tokens,
+                                                                                model = model, display=False)
+            
+            original_de[batch, pos] = (per_head_direct_effect)[receiving_head[0], receiving_head[1], batch, pos].item()
+            new_de[batch, pos] = (new_per_head_direct_effect)[receiving_head[0], receiving_head[1], batch, pos].item()
+            receive_heads.append(receiving_head)
+            
+    return original_de, new_de, receive_heads
+# %
 # %%
-if OUTPUT_WITH_RANDOM_HEAD:
-    prefix = "random-head" 
-elif OUTPUT_WITH_RANDOM_DIRECTION:
-    prefix = "random-direction"
-else:
-    prefix = "self"
-fig = px.scatter(x=original_de.flatten(), y=new_de.flatten(), title=f"{prefix}-repression of heads | scaling == {SCALING}")
+scaling_factors = [1, 2, 5]
+def loop_and_analyze():
+    results = {}
+    for output_type in [output_source.WITH_SAME_AS_RECEIVING_HEAD, output_source.WITH_RANDOM_HEAD, output_source.WITH_RANDOM_DIRECTION]:
+        for receiving_type in [receiving_source.WITH_TOP_HEAD, receiving_source.WITH_FIXED_GLOBAL_TOP_HEAD]:
+            for scaling in scaling_factors:
+                orig_de, new_de, heads = analyze_head(output_type, receiving_type, scaling = scaling)
+                key = (output_type.name, receiving_type.name, scaling)
+                results[key] = (orig_de, new_de, heads)
+                #plot_results(orig_de, new_de, heads, scaling, output_type, receiving_type)
+                
+                
+    with open('results_{safe_model_name}.pickle', 'wb') as f:
+        pickle.dump(results, f)
 
-fig.add_trace(go.Scatter(x=[original_de.min(), original_de.max()], y=[original_de.min(), original_de.max()], mode='lines', name='y=x'))
-fig.update_layout(
-    xaxis_title="Original Direct Effect",
-    yaxis_title="New Direct Effect",
-)
+loop_and_analyze()
 
-fig.update_traces(marker=dict(size=2))  # Decrease the size of the dots
 
-fig.show()
+# %%
+
 
 # %%

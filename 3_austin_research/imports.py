@@ -28,7 +28,6 @@ import copy
 import itertools
 from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
 import dataclasses
-import datasets
 from IPython.display import HTML
 
 import transformer_lens
