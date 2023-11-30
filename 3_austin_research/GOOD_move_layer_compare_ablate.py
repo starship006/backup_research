@@ -14,6 +14,11 @@ from GOOD_helpers import *
  
 in_notebook_mode = False
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+use_owt_originally = True
+
+owt_dataset = utils.get_dataset("owt")
+owt_dataset_name = "owt"
+
 
 model_names = [
     "gpt2-small",
@@ -30,8 +35,6 @@ model_names = [
     "pythia-1b-deduped",
     "tiny-stories-instruct-33M",
 ]
-
-
 
 
 
@@ -52,19 +55,36 @@ for model_name in model_names:
     )
     model.set_use_attn_result(True)
     
+    
+    
     PROMPTS, ANSWERS, ANSWER_INDICIES = generate_ioi_prompts(model, 30)
+    
+    
     
     clean_tokens: Float[Tensor, "batch pos"] = model.to_tokens(PROMPTS).to(device)
     answer_tokens: Float[Tensor, "batch 1"] = model.to_tokens(ANSWERS, prepend_bos=False).to(device)
     answer_token_idx: Float[Tensor, "batch"] = torch.tensor(ANSWER_INDICIES).to(device)
-
     
-    # See if the answer_token_idx is correct
-    unsqueezed_answers_idx = answer_token_idx.unsqueeze(-1)
-    indexed_answers = clean_tokens.gather(-1, unsqueezed_answers_idx)
-    assert torch.all(torch.eq(answer_tokens, indexed_answers))
-
+   
     
+    batch_size = clean_tokens.shape[0]
+    prompt_len = clean_tokens.shape[1]
+
+    all_owt_tokens = model.to_tokens(owt_dataset[0:(batch_size * 2)]["text"]).to(device)
+    owt_tokens = all_owt_tokens[0:batch_size][:, :prompt_len]
+    corrupted_owt_tokens = all_owt_tokens[batch_size:batch_size * 2][:, :prompt_len]
+    assert owt_tokens.shape == corrupted_owt_tokens.shape == (batch_size, prompt_len)
+    
+    
+    if use_owt_originally:
+        clean_tokens = owt_tokens
+    else:
+        # See if the answer_token_idx is correct
+        unsqueezed_answers_idx = answer_token_idx.unsqueeze(-1)
+        indexed_answers = clean_tokens.gather(-1, unsqueezed_answers_idx)
+        assert torch.all(torch.eq(answer_tokens, indexed_answers))
+        
+        
     logits, cache = model.run_with_cache(clean_tokens)
     
      
@@ -73,7 +93,7 @@ for model_name in model_names:
 
     if in_notebook_mode:
         show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)), title = "Direct Effect of Heads and MLP Layers")
-     
+    
 
     def get_name_direct_effects(per_head_direct_effect, all_layer_direct_effect, answer_token_idx):
         expanded_indicies = einops.repeat(answer_token_idx, "b -> a c b 1", a = model.cfg.n_layers, c = model.cfg.n_heads)
@@ -142,16 +162,7 @@ for model_name in model_names:
      
 
     
-    owt_dataset = utils.get_dataset("owt")
-    owt_dataset_name = "owt"
     
-    batch_size = clean_tokens.shape[0]
-    prompt_len = clean_tokens.shape[1]
-
-    all_owt_tokens = model.to_tokens(owt_dataset[0:(batch_size * 2)]["text"]).to(device)
-    owt_tokens = all_owt_tokens[0:batch_size][:, :prompt_len]
-    corrupted_owt_tokens = all_owt_tokens[batch_size:batch_size * 2][:, :prompt_len]
-    assert owt_tokens.shape == corrupted_owt_tokens.shape == (batch_size, prompt_len)
     
     top_head = topk_of_Nd_tensor(important_direct_effect.mean((-1)), 1)[0]
 
@@ -160,8 +171,8 @@ for model_name in model_names:
     
 
     nodes = [Node("z", top_head[0], top_head[1])]
-    new_cache = act_patch(model, clean_tokens, nodes, return_item, owt_tokens, apply_metric_to_cache=True)
-    ablated_per_head_direct_effect, ablated_all_layer_direct_effect = collect_direct_effect(new_cache, correct_tokens=clean_tokens,model = model,
+    new_cache = act_patch(model, clean_tokens, nodes, return_item, corrupted_owt_tokens, apply_metric_to_cache=True)
+    ablated_per_head_direct_effect, ablated_all_layer_direct_effect = collect_direct_effect(new_cache, correct_tokens=clean_tokens, model = model,
                                                                                             title = "ablated DE", display=in_notebook_mode, cache_for_scaling=cache)
     ablated_important_direct_effect, ablated_important_direct_effect_mlp = get_name_direct_effects(ablated_per_head_direct_effect, ablated_all_layer_direct_effect, answer_token_idx)
     

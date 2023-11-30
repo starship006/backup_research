@@ -305,7 +305,7 @@ def add_vector_to_resid(
     original_resid_stream: Float[Tensor, "batch seq d_model"],
     hook: HookPoint,
     vector: Float[Tensor, "batch d_model"],
-    positions = Float[Tensor, "batch"],
+    positions = Union[Float[Tensor, "batch"], int],
 ) -> Float[Tensor, "batch n_head pos pos"]:
     '''
     Hook that adds vector into residual stream at position
@@ -315,6 +315,10 @@ def add_vector_to_resid(
     assert original_resid_stream.shape[0] == vector.shape[0]
     assert original_resid_stream.shape[2] == vector.shape[1]
     
+    if isinstance(positions, int):
+        device = "cuda" if original_resid_stream.get_device() >= 0 else "cpu"
+        positions = torch.tensor([positions] * original_resid_stream.shape[0]).to(device)
+    
     
     
     
@@ -322,8 +326,6 @@ def add_vector_to_resid(
     resid_stream_at_pos = torch.gather(original_resid_stream, 1, expanded_positions)
     resid_stream_at_pos = einops.rearrange(resid_stream_at_pos, "batch 1 d_model -> batch d_model")
     
-    print(resid_stream_at_pos.shape)
-    print(vector.shape)
     resid_stream_at_pos = resid_stream_at_pos + vector
     for i in range(original_resid_stream.shape[0]):
         original_resid_stream[i, positions[i], :] = resid_stream_at_pos[i]

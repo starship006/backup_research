@@ -16,7 +16,7 @@ from reused_hooks import overwrite_activation_hook
 in_notebook_mode = True
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if in_notebook_mode:
-    model_name = "pythia-160m"
+    model_name = "pythia-410m"
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
@@ -124,5 +124,9 @@ def add_vector_resid_see_change(head: tuple, scaling = 1, layer = None, display_
         
     show_input(head_de, mlp_de, title = title)
 
-add_vector_resid_see_change(second_head, -3, second_head[0], True)
+target_head = top_head
+random_head = (np.random.randint(model.cfg.n_layers), np.random.randint(model.cfg.n_heads))
+add_vector_resid_see_change(random_head, 50, target_head[0], True)
+print(random_head, important_direct_effect.mean((-1))[random_head[0], random_head[1]])
+print(target_head)
 # %%
