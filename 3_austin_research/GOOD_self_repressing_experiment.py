@@ -37,8 +37,8 @@ model = HookedTransformer.from_pretrained(
 )
 model.set_use_attn_result(True)
 # %%
-batch_size = 40
-prompt_len = 40
+batch_size = 30
+prompt_len = 30
 
 owt_dataset = utils.get_dataset("owt")
 owt_dataset_name = "owt"    
@@ -135,16 +135,17 @@ def analyze_head(output_type, receiving_type, scaling, custom_head = None):
 scaling_factors = [1, 2, 5]
 def loop_and_analyze():
     results = {}
-    for output_type in [output_source.WITH_SAME_AS_RECEIVING_HEAD, output_source.WITH_RANDOM_HEAD, output_source.WITH_RANDOM_DIRECTION]:
+    for output_type in tqdm([output_source.WITH_SAME_AS_RECEIVING_HEAD, output_source.WITH_RANDOM_HEAD, output_source.WITH_RANDOM_DIRECTION]):
         for receiving_type in [receiving_source.WITH_TOP_HEAD, receiving_source.WITH_FIXED_GLOBAL_TOP_HEAD]:
             for scaling in scaling_factors:
+                print("starting)")
                 orig_de, new_de, heads = analyze_head(output_type, receiving_type, scaling = scaling)
                 key = (output_type.name, receiving_type.name, scaling)
                 results[key] = (orig_de, new_de, heads)
                 #plot_results(orig_de, new_de, heads, scaling, output_type, receiving_type)
                 
                 
-    with open('results_{safe_model_name}.pickle', 'wb') as f:
+    with open(f'results_{safe_model_name}.pickle', 'wb') as f:
         pickle.dump(results, f)
 
 loop_and_analyze()

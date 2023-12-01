@@ -1,0 +1,99 @@
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Loaded pretrained model gpt2-small into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [04:08<08:17, 248.67s/it] 67%|██████▋   | 2/3 [08:12<04:05, 245.72s/it]100%|██████████| 3/3 [12:19<00:00, 246.54s/it]100%|██████████| 3/3 [12:19<00:00, 246.61s/it]
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Loaded pretrained model gpt2-medium into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [10:24<20:48, 624.46s/it] 67%|██████▋   | 2/3 [20:56<10:28, 628.70s/it]100%|██████████| 3/3 [31:24<00:00, 628.63s/it]100%|██████████| 3/3 [31:24<00:00, 628.23s/it]
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Loaded pretrained model gpt2-large into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [19:59<39:59, 1199.86s/it] 67%|██████▋   | 2/3 [40:10<20:05, 1205.92s/it]100%|██████████| 3/3 [1:00:17<00:00, 1206.42s/it]100%|██████████| 3/3 [1:00:17<00:00, 1205.68s/it]
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+Traceback (most recent call last):
+  File "/data/cody_rushing/data/3_austin_research/GOOD_self_repressing_experiment.py", line 30, in <module>
+    model = HookedTransformer.from_pretrained(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/cody_rushing/miniconda3/lib/python3.11/site-packages/transformer_lens/HookedTransformer.py", line 842, in from_pretrained
+    official_model_name = loading.get_official_model_name(model_name)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/cody_rushing/miniconda3/lib/python3.11/site-packages/transformer_lens/loading_from_pretrained.py", line 469, in get_official_model_name
+    raise ValueError(
+ValueError: opt-410m not found. Valid official model names (excl aliases): ['gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl', 'distilgpt2', 'facebook/opt-125m', 'facebook/opt-1.3b', 'facebook/opt-2.7b', 'facebook/opt-6.7b', 'facebook/opt-13b', 'facebook/opt-30b', 'facebook/opt-66b', 'EleutherAI/gpt-neo-125M', 'EleutherAI/gpt-neo-1.3B', 'EleutherAI/gpt-neo-2.7B', 'EleutherAI/gpt-j-6B', 'EleutherAI/gpt-neox-20b', 'stanford-crfm/alias-gpt2-small-x21', 'stanford-crfm/battlestar-gpt2-small-x49', 'stanford-crfm/caprica-gpt2-small-x81', 'stanford-crfm/darkmatter-gpt2-small-x343', 'stanford-crfm/expanse-gpt2-small-x777', 'stanford-crfm/arwen-gpt2-medium-x21', 'stanford-crfm/beren-gpt2-medium-x49', 'stanford-crfm/celebrimbor-gpt2-medium-x81', 'stanford-crfm/durin-gpt2-medium-x343', 'stanford-crfm/eowyn-gpt2-medium-x777', 'EleutherAI/pythia-70m', 'EleutherAI/pythia-160m', 'EleutherAI/pythia-410m', 'EleutherAI/pythia-1b', 'EleutherAI/pythia-1.4b', 'EleutherAI/pythia-2.8b', 'EleutherAI/pythia-6.9b', 'EleutherAI/pythia-12b', 'EleutherAI/pythia-70m-deduped', 'EleutherAI/pythia-160m-deduped', 'EleutherAI/pythia-410m-deduped', 'EleutherAI/pythia-1b-deduped', 'EleutherAI/pythia-1.4b-deduped', 'EleutherAI/pythia-2.8b-deduped', 'EleutherAI/pythia-6.9b-deduped', 'EleutherAI/pythia-12b-deduped', 'EleutherAI/pythia-70m-v0', 'EleutherAI/pythia-160m-v0', 'EleutherAI/pythia-410m-v0', 'EleutherAI/pythia-1b-v0', 'EleutherAI/pythia-1.4b-v0', 'EleutherAI/pythia-2.8b-v0', 'EleutherAI/pythia-6.9b-v0', 'EleutherAI/pythia-12b-v0', 'EleutherAI/pythia-70m-deduped-v0', 'EleutherAI/pythia-160m-deduped-v0', 'EleutherAI/pythia-410m-deduped-v0', 'EleutherAI/pythia-1b-deduped-v0', 'EleutherAI/pythia-1.4b-deduped-v0', 'EleutherAI/pythia-2.8b-deduped-v0', 'EleutherAI/pythia-6.9b-deduped-v0', 'EleutherAI/pythia-12b-deduped-v0', 'NeelNanda/SoLU_1L_v9_old', 'NeelNanda/SoLU_2L_v10_old', 'NeelNanda/SoLU_4L_v11_old', 'NeelNanda/SoLU_6L_v13_old', 'NeelNanda/SoLU_8L_v21_old', 'NeelNanda/SoLU_10L_v22_old', 'NeelNanda/SoLU_12L_v23_old', 'NeelNanda/SoLU_1L512W_C4_Code', 'NeelNanda/SoLU_2L512W_C4_Code', 'NeelNanda/SoLU_3L512W_C4_Code', 'NeelNanda/SoLU_4L512W_C4_Code', 'NeelNanda/SoLU_6L768W_C4_Code', 'NeelNanda/SoLU_8L1024W_C4_Code', 'NeelNanda/SoLU_10L1280W_C4_Code', 'NeelNanda/SoLU_12L1536W_C4_Code', 'NeelNanda/GELU_1L512W_C4_Code', 'NeelNanda/GELU_2L512W_C4_Code', 'NeelNanda/GELU_3L512W_C4_Code', 'NeelNanda/GELU_4L512W_C4_Code', 'NeelNanda/Attn_Only_1L512W_C4_Code', 'NeelNanda/Attn_Only_2L512W_C4_Code', 'NeelNanda/Attn_Only_3L512W_C4_Code', 'NeelNanda/Attn_Only_4L512W_C4_Code', 'NeelNanda/Attn-Only-2L512W-Shortformer-6B-big-lr', 'NeelNanda/SoLU_1L512W_Wiki_Finetune', 'NeelNanda/SoLU_4L512W_Wiki_Finetune', 'ArthurConmy/redwood_attn_2l', 'llama-7b-hf', 'llama-13b-hf', 'llama-30b-hf', 'llama-65b-hf', 'Baidicoot/Othello-GPT-Transformer-Lens', 'bert-base-cased', 'roneneldan/TinyStories-1M', 'roneneldan/TinyStories-3M', 'roneneldan/TinyStories-8M', 'roneneldan/TinyStories-28M', 'roneneldan/TinyStories-33M', 'roneneldan/TinyStories-Instruct-1M', 'roneneldan/TinyStories-Instruct-3M', 'roneneldan/TinyStories-Instruct-8M', 'roneneldan/TinyStories-Instruct-28M', 'roneneldan/TinyStories-Instruct-33M', 'roneneldan/TinyStories-1Layer-21M', 'roneneldan/TinyStories-2Layers-33M', 'roneneldan/TinyStories-Instuct-1Layer-21M', 'roneneldan/TinyStories-Instruct-2Layers-33M']
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Loaded pretrained model gpt-neo-125M into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [05:01<10:02, 301.45s/it] 67%|██████▋   | 2/3 [10:19<05:11, 311.26s/it]100%|██████████| 3/3 [15:28<00:00, 310.41s/it]100%|██████████| 3/3 [15:28<00:00, 309.66s/it]
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+starting)
+slurmstepd: error: *** JOB 983156 ON compute-permanent-node-990 CANCELLED AT 2023-12-01T00:19:02 DUE TO TIME LIMIT ***
