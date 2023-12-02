@@ -61,7 +61,11 @@ if in_notebook_mode:
 
 
 # %%
-global_top_head = topk_of_Nd_tensor(per_head_direct_effect.mean((-1,-2)), 1)[0]
+top_heads = topk_of_Nd_tensor(per_head_direct_effect.mean((-1,-2)), 2)
+
+global_top_head = top_heads[0]
+global_second_head = top_heads[1]
+
 
 # %%
 class output_source(Enum):
@@ -74,6 +78,7 @@ class receiving_source(Enum):
     WITH_TOP_HEAD = 1
     WITH_FIXED_GLOBAL_TOP_HEAD = 2
     WITH_CUSTOM_HEAD = 3
+    WITH_FIXED_GLOBAL_SECOND_HEAD = 4
 
 
 def analyze_head(output_type, receiving_type, scaling, custom_head = None):
@@ -87,6 +92,8 @@ def analyze_head(output_type, receiving_type, scaling, custom_head = None):
             
             if receiving_type == receiving_source.WITH_FIXED_GLOBAL_TOP_HEAD:
                 receiving_head = global_top_head
+            elif receiving_type == receiving_source.WITH_FIXED_GLOBAL_SECOND_HEAD:
+                receiving_head = global_second_head
             elif receiving_type == receiving_source.WITH_TOP_HEAD:
                 receiving_head = topk_of_Nd_tensor(direct_effects, 1)[0]
             elif receiving_type == receiving_source.WITH_CUSTOM_HEAD:
@@ -135,10 +142,22 @@ def analyze_head(output_type, receiving_type, scaling, custom_head = None):
 scaling_factors = [1, 2, 5]
 def loop_and_analyze():
     results = {}
+    
+    # try to load in results
+    try:
+        with open(f'results_{safe_model_name}.pickle', 'rb') as f:
+            results = pickle.load(f)
+    except:
+        pass
+    
     for output_type in tqdm([output_source.WITH_SAME_AS_RECEIVING_HEAD, output_source.WITH_RANDOM_HEAD, output_source.WITH_RANDOM_DIRECTION]):
-        for receiving_type in [receiving_source.WITH_TOP_HEAD, receiving_source.WITH_FIXED_GLOBAL_TOP_HEAD]:
+        for receiving_type in [receiving_source.WITH_TOP_HEAD, receiving_source.WITH_FIXED_GLOBAL_TOP_HEAD, receiving_source.WITH_FIXED_GLOBAL_SECOND_HEAD]:
             for scaling in scaling_factors:
-                print("starting)")
+                if (output_type.name, receiving_type.name, scaling) in results:
+                    print("already did this comp")
+                    continue
+                
+                print("starting new comp")
                 orig_de, new_de, heads = analyze_head(output_type, receiving_type, scaling = scaling)
                 key = (output_type.name, receiving_type.name, scaling)
                 results[key] = (orig_de, new_de, heads)
