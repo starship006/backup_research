@@ -1,8 +1,14 @@
-*.pickle
 *.html
 *.png
 *.pkl
 *.zip.*
 *.pyc
 *.pdf
-*.pt
+/3_austin_research/clustering_results
+/3_austin_research/figures
+/3_austin_research/GOOD_clean_figures
+/3_austin_research/pickle_storage
+/3_austin_research/signature_weights
+/3_austin_research/threshold_figures
+/1_newer_backup/*.pickle
+/2_newest_backup/*.pickle
