@@ -1,10 +1,20 @@
-# %%
 import streamlit as st
 import pickle
 import plotly.graph_objects as go
+import os
+
+# Initialize session state variables
+if 'model_name' not in st.session_state:
+    st.session_state['model_name'] = 'gpt2-small'
+if 'output_type' not in st.session_state:
+    st.session_state['output_type'] = None
+if 'receiving_type' not in st.session_state:
+    st.session_state['receiving_type'] = None
+if 'scaling' not in st.session_state:
+    st.session_state['scaling'] = None
 # %%
 
-def plot_results(original_de, new_de, receive_heads, scaling, output_type, receiving_type):
+def plot_results(original_de, new_de, receive_heads, scaling, output_type, receiving_type, model_name):
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
@@ -25,33 +35,57 @@ def plot_results(original_de, new_de, receive_heads, scaling, output_type, recei
     )
 
     fig.update_layout(
-        title=f"repression of heads | scaling == {scaling} | {output_type} | {receiving_type}",
+        title=f"repression of heads | scaling == {scaling} | {model_name} | {output_type} | {receiving_type}",
         xaxis_title="Original Direct Effect",
         yaxis_title="New Direct Effect"
     )
 
     return fig
     
-# %%
+    
+    
     
 def load_results(model_name):
-    with open(f'results_{model_name}.pickle', 'rb') as f:
-        return pickle.load(f)
+    try:
+        with open(f"results_{model_name}.pickle", "rb") as f:
+            results = pickle.load(f)
+    except FileNotFoundError:
+        st.error("No results found for this model.")
+        return None
+    return results    
+    
+# Load the model options and results
+def get_model_names():
+    model_files = [f for f in os.listdir('.') if f.startswith('results_') and f.endswith('.pickle')]
+    model_names = [f[len('results_'): -len('.pickle')] for f in model_files]
+    return model_names
 
-model_name = st.sidebar.selectbox("Select model", ["pythia-160m", "gpt2-small", "gpt-neo-125m", "gpt2-large",
-                                                   "gpt2-medium", "pythia-410m", "stanford-gpt2-medium-a", "stanford-gpt2-small-a"])
-results = load_results(model_name) 
+model_options = get_model_names()
+results = load_results(st.session_state['model_name'])
 
-output_type = st.sidebar.selectbox("Output type", options={r[0] for r in results.keys()})
-receiving_type = st.sidebar.selectbox("Receiving type", options={r[1] for r in results.keys()}) 
-scaling = st.sidebar.selectbox("Scaling", options={r[2] for r in results.keys()})
+# User Interface
+st.title("Model Analysis Tool")
 
-orig_de, new_de, heads = results[(output_type, receiving_type, scaling)]
+# Model selection
+col1, col2, col3, col4 = st.columns(4)
+for i, model in enumerate(model_options):
+    if (i % 4 == 0 and col1.button(model)) or (i % 4 == 1 and col2.button(model)) or \
+       (i % 4 == 2 and col3.button(model)) or (i % 4 == 3 and col4.button(model)):
+        st.session_state['model_name'] = model
+        results = load_results(model)
 
-st.subheader(f"Results for {output_type}, {receiving_type}, scaling={scaling}")
-fig = plot_results(orig_de, new_de, heads, scaling, output_type, receiving_type)
+# Dynamic options based on the model selected
+if results:
+    options = list(results.keys())
+    output_types = {r[0] for r in options}
+    receiving_types = {r[1] for r in options}
+    scalings = {r[2] for r in options}
 
-st.plotly_chart(fig)
+    st.session_state['output_type'] = st.radio("Output Type", list(output_types))
+    st.session_state['receiving_type'] = st.radio("Receiving Type", list(receiving_types))
+    st.session_state['scaling'] = st.radio("Scaling", list(scalings))
 
-
-# %%
+    if st.session_state['output_type'] and st.session_state['receiving_type'] and st.session_state['scaling']:
+        orig_de, new_de, heads = results[(st.session_state['output_type'], st.session_state['receiving_type'], st.session_state['scaling'])]
+        fig = plot_results(orig_de, new_de, heads, st.session_state['scaling'], st.session_state['output_type'], st.session_state['receiving_type'], st.session_state['model_name'])
+        st.plotly_chart(fig)
