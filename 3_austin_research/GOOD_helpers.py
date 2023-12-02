@@ -320,8 +320,6 @@ def add_vector_to_resid(
         positions = torch.tensor([positions] * original_resid_stream.shape[0]).to(device)
     
     
-    
-    
     expanded_positions = einops.repeat(positions, "batch -> batch 1 d_model", d_model = vector.shape[1])
     resid_stream_at_pos = torch.gather(original_resid_stream, 1, expanded_positions)
     resid_stream_at_pos = einops.rearrange(resid_stream_at_pos, "batch 1 d_model -> batch d_model")
@@ -331,3 +329,17 @@ def add_vector_to_resid(
         original_resid_stream[i, positions[i], :] = resid_stream_at_pos[i]
     return original_resid_stream
 # %%
+def add_vector_to_all_resid(
+    original_resid_stream: Float[Tensor, "batch seq d_model"],
+    hook: HookPoint,
+    vector: Float[Tensor, "batch pos d_model"],
+) -> Float[Tensor, "batch n_head pos pos"]:
+    '''
+    Hook that just adds a vector to the entire residual stream
+    '''
+    assert len(original_resid_stream.shape) == 3
+    assert original_resid_stream.shape == vector.shape
+    
+    original_resid_stream = original_resid_stream + vector
+    return original_resid_stream
+   

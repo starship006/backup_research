@@ -1,0 +1,833 @@
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Running in script mode
+Loaded pretrained model gpt2-small into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [00:40<01:20, 40.46s/it] 67%|██████▋   | 2/3 [01:21<00:40, 40.70s/it]100%|██████████| 3/3 [02:02<00:00, 40.72s/it]100%|██████████| 3/3 [02:02<00:00, 40.69s/it]
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Running in script mode
+Loaded pretrained model gpt2-medium into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [01:45<03:31, 105.79s/it] 67%|██████▋   | 2/3 [03:25<01:42, 102.27s/it]100%|██████████| 3/3 [05:02<00:00, 99.85s/it] 100%|██████████| 3/3 [05:02<00:00, 100.85s/it]
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Running in script mode
+Loaded pretrained model gpt2-large into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [03:15<06:30, 195.13s/it] 67%|██████▋   | 2/3 [06:30<03:15, 195.55s/it]100%|██████████| 3/3 [09:48<00:00, 196.32s/it]100%|██████████| 3/3 [09:48<00:00, 196.07s/it]
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Running in script mode
+Loaded pretrained model opt-125m into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [00:41<01:23, 41.95s/it] 67%|██████▋   | 2/3 [01:24<00:42, 42.36s/it]100%|██████████| 3/3 [02:07<00:00, 42.42s/it]100%|██████████| 3/3 [02:07<00:00, 42.37s/it]
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+Running in script mode
+Traceback (most recent call last):
+  File "/data/cody_rushing/data/3_austin_research/GOOD_self_repressing_experiment.py", line 46, in <module>
+    model = HookedTransformer.from_pretrained(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/cody_rushing/miniconda3/lib/python3.11/site-packages/transformer_lens/HookedTransformer.py", line 842, in from_pretrained
+    official_model_name = loading.get_official_model_name(model_name)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/cody_rushing/miniconda3/lib/python3.11/site-packages/transformer_lens/loading_from_pretrained.py", line 469, in get_official_model_name
+    raise ValueError(
+ValueError: opt-410m not found. Valid official model names (excl aliases): ['gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl', 'distilgpt2', 'facebook/opt-125m', 'facebook/opt-1.3b', 'facebook/opt-2.7b', 'facebook/opt-6.7b', 'facebook/opt-13b', 'facebook/opt-30b', 'facebook/opt-66b', 'EleutherAI/gpt-neo-125M', 'EleutherAI/gpt-neo-1.3B', 'EleutherAI/gpt-neo-2.7B', 'EleutherAI/gpt-j-6B', 'EleutherAI/gpt-neox-20b', 'stanford-crfm/alias-gpt2-small-x21', 'stanford-crfm/battlestar-gpt2-small-x49', 'stanford-crfm/caprica-gpt2-small-x81', 'stanford-crfm/darkmatter-gpt2-small-x343', 'stanford-crfm/expanse-gpt2-small-x777', 'stanford-crfm/arwen-gpt2-medium-x21', 'stanford-crfm/beren-gpt2-medium-x49', 'stanford-crfm/celebrimbor-gpt2-medium-x81', 'stanford-crfm/durin-gpt2-medium-x343', 'stanford-crfm/eowyn-gpt2-medium-x777', 'EleutherAI/pythia-70m', 'EleutherAI/pythia-160m', 'EleutherAI/pythia-410m', 'EleutherAI/pythia-1b', 'EleutherAI/pythia-1.4b', 'EleutherAI/pythia-2.8b', 'EleutherAI/pythia-6.9b', 'EleutherAI/pythia-12b', 'EleutherAI/pythia-70m-deduped', 'EleutherAI/pythia-160m-deduped', 'EleutherAI/pythia-410m-deduped', 'EleutherAI/pythia-1b-deduped', 'EleutherAI/pythia-1.4b-deduped', 'EleutherAI/pythia-2.8b-deduped', 'EleutherAI/pythia-6.9b-deduped', 'EleutherAI/pythia-12b-deduped', 'EleutherAI/pythia-70m-v0', 'EleutherAI/pythia-160m-v0', 'EleutherAI/pythia-410m-v0', 'EleutherAI/pythia-1b-v0', 'EleutherAI/pythia-1.4b-v0', 'EleutherAI/pythia-2.8b-v0', 'EleutherAI/pythia-6.9b-v0', 'EleutherAI/pythia-12b-v0', 'EleutherAI/pythia-70m-deduped-v0', 'EleutherAI/pythia-160m-deduped-v0', 'EleutherAI/pythia-410m-deduped-v0', 'EleutherAI/pythia-1b-deduped-v0', 'EleutherAI/pythia-1.4b-deduped-v0', 'EleutherAI/pythia-2.8b-deduped-v0', 'EleutherAI/pythia-6.9b-deduped-v0', 'EleutherAI/pythia-12b-deduped-v0', 'NeelNanda/SoLU_1L_v9_old', 'NeelNanda/SoLU_2L_v10_old', 'NeelNanda/SoLU_4L_v11_old', 'NeelNanda/SoLU_6L_v13_old', 'NeelNanda/SoLU_8L_v21_old', 'NeelNanda/SoLU_10L_v22_old', 'NeelNanda/SoLU_12L_v23_old', 'NeelNanda/SoLU_1L512W_C4_Code', 'NeelNanda/SoLU_2L512W_C4_Code', 'NeelNanda/SoLU_3L512W_C4_Code', 'NeelNanda/SoLU_4L512W_C4_Code', 'NeelNanda/SoLU_6L768W_C4_Code', 'NeelNanda/SoLU_8L1024W_C4_Code', 'NeelNanda/SoLU_10L1280W_C4_Code', 'NeelNanda/SoLU_12L1536W_C4_Code', 'NeelNanda/GELU_1L512W_C4_Code', 'NeelNanda/GELU_2L512W_C4_Code', 'NeelNanda/GELU_3L512W_C4_Code', 'NeelNanda/GELU_4L512W_C4_Code', 'NeelNanda/Attn_Only_1L512W_C4_Code', 'NeelNanda/Attn_Only_2L512W_C4_Code', 'NeelNanda/Attn_Only_3L512W_C4_Code', 'NeelNanda/Attn_Only_4L512W_C4_Code', 'NeelNanda/Attn-Only-2L512W-Shortformer-6B-big-lr', 'NeelNanda/SoLU_1L512W_Wiki_Finetune', 'NeelNanda/SoLU_4L512W_Wiki_Finetune', 'ArthurConmy/redwood_attn_2l', 'llama-7b-hf', 'llama-13b-hf', 'llama-30b-hf', 'llama-65b-hf', 'Baidicoot/Othello-GPT-Transformer-Lens', 'bert-base-cased', 'roneneldan/TinyStories-1M', 'roneneldan/TinyStories-3M', 'roneneldan/TinyStories-8M', 'roneneldan/TinyStories-28M', 'roneneldan/TinyStories-33M', 'roneneldan/TinyStories-Instruct-1M', 'roneneldan/TinyStories-Instruct-3M', 'roneneldan/TinyStories-Instruct-8M', 'roneneldan/TinyStories-Instruct-28M', 'roneneldan/TinyStories-Instruct-33M', 'roneneldan/TinyStories-1Layer-21M', 'roneneldan/TinyStories-2Layers-33M', 'roneneldan/TinyStories-Instuct-1Layer-21M', 'roneneldan/TinyStories-Instruct-2Layers-33M']
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Running in script mode
+Loaded pretrained model gpt-neo-125M into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [00:44<01:28, 44.28s/it] 67%|██████▋   | 2/3 [01:28<00:44, 44.40s/it]100%|██████████| 3/3 [02:13<00:00, 44.47s/it]100%|██████████| 3/3 [02:13<00:00, 44.44s/it]
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Running in script mode
+Loaded pretrained model pythia-160m into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [00:23<00:46, 23.21s/it] 67%|██████▋   | 2/3 [00:44<00:22, 22.19s/it]100%|██████████| 3/3 [01:06<00:00, 21.99s/it]100%|██████████| 3/3 [01:06<00:00, 22.14s/it]
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Running in script mode
+Loaded pretrained model stanford-gpt2-small-a into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [00:20<00:41, 20.76s/it] 67%|██████▋   | 2/3 [00:41<00:20, 20.82s/it]100%|██████████| 3/3 [01:02<00:00, 20.78s/it]100%|██████████| 3/3 [01:02<00:00, 20.79s/it]
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+already did this comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Running in script mode
+Loaded pretrained model stanford-gpt2-medium-a into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [01:43<03:26, 103.29s/it] 67%|██████▋   | 2/3 [03:25<01:42, 102.58s/it]100%|██████████| 3/3 [05:10<00:00, 103.65s/it]100%|██████████| 3/3 [05:10<00:00, 103.43s/it]
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Running in script mode
+Loaded pretrained model pythia-410m into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [01:43<03:26, 103.12s/it] 67%|██████▋   | 2/3 [03:26<01:43, 103.05s/it]100%|██████████| 3/3 [05:07<00:00, 102.12s/it]100%|██████████| 3/3 [05:07<00:00, 102.38s/it]
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+Running in script mode
+Downloading config.json:   0%|          | 0.00/570 [00:00<?, ?B/s]Downloading config.json: 100%|██████████| 570/570 [00:00<00:00, 6.31MB/s]
+Downloading model.safetensors:   0%|          | 0.00/911M [00:00<?, ?B/s]Downloading model.safetensors:   2%|▏         | 21.0M/911M [00:00<00:07, 118MB/s]Downloading model.safetensors:   5%|▍         | 41.9M/911M [00:00<00:05, 146MB/s]Downloading model.safetensors:   8%|▊         | 73.4M/911M [00:00<00:04, 178MB/s]Downloading model.safetensors:  12%|█▏        | 105M/911M [00:00<00:03, 202MB/s] Downloading model.safetensors:  15%|█▍        | 136M/911M [00:00<00:03, 209MB/s]Downloading model.safetensors:  18%|█▊        | 168M/911M [00:00<00:03, 216MB/s]Downloading model.safetensors:  22%|██▏       | 199M/911M [00:01<00:03, 201MB/s]Downloading model.safetensors:  25%|██▌       | 231M/911M [00:01<00:03, 214MB/s]Downloading model.safetensors:  29%|██▉       | 262M/911M [00:01<00:02, 222MB/s]Downloading model.safetensors:  32%|███▏      | 294M/911M [00:01<00:02, 228MB/s]Downloading model.safetensors:  36%|███▌      | 325M/911M [00:01<00:02, 236MB/s]Downloading model.safetensors:  39%|███▉      | 357M/911M [00:01<00:02, 240MB/s]Downloading model.safetensors:  43%|████▎     | 388M/911M [00:01<00:02, 237MB/s]Downloading model.safetensors:  46%|████▌     | 419M/911M [00:01<00:02, 239MB/s]Downloading model.safetensors:  49%|████▉     | 451M/911M [00:02<00:01, 240MB/s]Downloading model.safetensors:  53%|█████▎    | 482M/911M [00:02<00:01, 246MB/s]Downloading model.safetensors:  56%|█████▋    | 514M/911M [00:02<00:01, 248MB/s]Downloading model.safetensors:  60%|█████▉    | 545M/911M [00:02<00:01, 247MB/s]Downloading model.safetensors:  63%|██████▎   | 577M/911M [00:02<00:01, 249MB/s]Downloading model.safetensors:  67%|██████▋   | 608M/911M [00:02<00:01, 249MB/s]Downloading model.safetensors:  70%|███████   | 640M/911M [00:02<00:01, 252MB/s]Downloading model.safetensors:  74%|███████▎  | 671M/911M [00:02<00:00, 251MB/s]Downloading model.safetensors:  77%|███████▋  | 703M/911M [00:03<00:00, 242MB/s]Downloading model.safetensors:  81%|████████  | 734M/911M [00:03<00:00, 248MB/s]Downloading model.safetensors:  84%|████████▍ | 765M/911M [00:03<00:00, 249MB/s]Downloading model.safetensors:  87%|████████▋ | 797M/911M [00:03<00:00, 237MB/s]Downloading model.safetensors:  91%|█████████ | 828M/911M [00:03<00:00, 234MB/s]Downloading model.safetensors:  94%|█████████▍| 860M/911M [00:03<00:00, 237MB/s]Downloading model.safetensors:  98%|█████████▊| 891M/911M [00:03<00:00, 231MB/s]Downloading model.safetensors: 100%|██████████| 911M/911M [00:03<00:00, 230MB/s]
+Downloading tokenizer_config.json:   0%|          | 0.00/396 [00:00<?, ?B/s]Downloading tokenizer_config.json: 100%|██████████| 396/396 [00:00<00:00, 4.90MB/s]
+Downloading tokenizer.json:   0%|          | 0.00/2.11M [00:00<?, ?B/s]Downloading tokenizer.json: 100%|██████████| 2.11M/2.11M [00:00<00:00, 34.8MB/s]
+Downloading (…)cial_tokens_map.json:   0%|          | 0.00/99.0 [00:00<?, ?B/s]Downloading (…)cial_tokens_map.json: 100%|██████████| 99.0/99.0 [00:00<00:00, 1.28MB/s]
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Loaded pretrained model pythia-410m-deduped into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [01:46<03:32, 106.19s/it] 67%|██████▋   | 2/3 [03:30<01:45, 105.35s/it]100%|██████████| 3/3 [05:11<00:00, 103.15s/it]100%|██████████| 3/3 [05:11<00:00, 103.83s/it]
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Running in script mode
+Loaded pretrained model opt-1.3b into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s]  0%|          | 0/3 [00:01<?, ?it/s]
+starting new comp
+Traceback (most recent call last):
+  File "/data/cody_rushing/data/3_austin_research/GOOD_self_repressing_experiment.py", line 266, in <module>
+    loop_and_analyze()
+  File "/data/cody_rushing/data/3_austin_research/GOOD_self_repressing_experiment.py", line 256, in loop_and_analyze
+    orig_de, new_de, heads = analyze_constant_head(output_type, receiving_type, scaling = scaling)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/cody_rushing/data/3_austin_research/GOOD_self_repressing_experiment.py", line 217, in analyze_constant_head
+    new_per_head_direct_effect, new_all_layer_direct_effect = collect_direct_effect(new_cache, correct_tokens=clean_tokens,
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/cody_rushing/data/3_austin_research/GOOD_helpers.py", line 58, in collect_direct_effect
+    per_head_direct_effect: Float[Tensor, "heads batch pos_minus_one"] = residual_stack_to_direct_effect(clean_per_head_residual, token_residual_directions, True, scaling_cache = cache_for_scaling)
+                                                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/cody_rushing/data/3_austin_research/GOOD_helpers.py", line 21, in residual_stack_to_direct_effect
+    scaled_residual_stack = scaling_cache.apply_ln_to_stack(residual_stack, layer=-1, has_batch_dim=True) if apply_last_ln else residual_stack
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/cody_rushing/miniconda3/lib/python3.11/site-packages/transformer_lens/ActivationCache.py", line 646, in apply_ln_to_stack
+    return residual_stack / scale
+           ~~~~~~~~~~~~~~~^~~~~~~
+torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate 8.79 GiB (GPU 0; 79.15 GiB total capacity; 51.72 GiB already allocated; 5.83 GiB free; 72.82 GiB reserved in total by PyTorch) If reserved memory is >> allocated memory try setting max_split_size_mb to avoid fragmentation.  See documentation for Memory Management and PYTORCH_CUDA_ALLOC_CONF
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Running in script mode
+Loaded pretrained model pythia-1b-deduped into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [02:40<05:21, 160.51s/it] 67%|██████▋   | 2/3 [05:20<02:39, 159.98s/it]100%|██████████| 3/3 [07:59<00:00, 159.55s/it]100%|██████████| 3/3 [07:59<00:00, 159.72s/it]
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+Using pad_token, but it is not set yet.
+Found cached dataset openwebtext-10k (/data/cody_rushing/.cache/huggingface/datasets/stas___openwebtext-10k/plain_text/1.0.0/3a8df094c671b4cb63ed0b41f40fb3bd855e9ce2e3765e5df50abcdfb5ec144b)
+Running in script mode
+Loaded pretrained model tiny-stories-instruct-33M into HookedTransformer
+  0%|          | 0/3 [00:00<?, ?it/s] 33%|███▎      | 1/3 [00:22<00:45, 22.88s/it] 67%|██████▋   | 2/3 [00:47<00:23, 23.72s/it]100%|██████████| 3/3 [01:08<00:00, 22.80s/it]100%|██████████| 3/3 [01:08<00:00, 22.96s/it]
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+starting new comp
+Running with model gpt2-small
+Running with model gpt2-medium
+Running with model gpt2-large
+Running with model opt-125m
+Running with model opt-410m
+Running with model gpt-neo-125M
+Running with model pythia-160m
+Running with model stanford-gpt2-small-a
+Running with model stanford-gpt2-medium-a
+Running with model pythia-410m
+Running with model pythia-410m-deduped
+Running with model opt-1.3b
+Running with model pythia-1b-deduped
+Running with model tiny-stories-instruct-33M
