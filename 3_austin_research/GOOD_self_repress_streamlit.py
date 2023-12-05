@@ -2,6 +2,7 @@ import streamlit as st
 import pickle
 import plotly.graph_objects as go
 import os
+import re
 
 # Initialize session state variables
 if 'model_name' not in st.session_state:
@@ -76,14 +77,52 @@ for i, model in enumerate(model_options):
 
 # Dynamic options based on the model selected
 if results:
+    
     options = list(results.keys())
-    output_types = {r[0] for r in options}
-    receiving_types = {r[1] for r in options}
     scalings = {r[2] for r in options}
+    
+    if st.checkbox('Use Custom Head'):
+        
+        custom_options = set([i[1] for i in options if i[1].startswith('WITH_CUSTOM_HEAD')])
+        
+        def convert_to_tuple(input_text):
+            # Modified pattern with capturing groups for numbers
+            pattern = re.compile(r"[A-Za-z]+_[A-Za-z]+_[A-Za-z]+\[([0-9]+),\s+([0-9]+)\]", re.IGNORECASE)
+            match = pattern.match(input_text)
 
-    st.session_state['output_type'] = st.radio("Output Type", list(output_types))
-    st.session_state['receiving_type'] = st.radio("Receiving Type", list(receiving_types))
-    st.session_state['scaling'] = st.radio("Scaling", list(scalings))
+            if match:
+                # Extract numbers from the capturing groups and convert them to integers
+                first_number = int(match.group(1))
+                second_number = int(match.group(2))
+                return (first_number, second_number)
+            else:
+                print(input_text)
+                # Handle the case where the pattern does not match
+                return None
+            
+        custom_options = [convert_to_tuple(i) for i in custom_options if (convert_to_tuple(i) is not None)]
+        print(custom_options)
+        all_layers = {i[0] for i in custom_options}
+        all_heads = {i[1] for i in custom_options}
+        # Dropdown for Layer selection
+        layer = st.selectbox('Select Layer', range(min(all_layers), max(all_layers) + 1))  # Replace 'max_layer' with the actual max layer number
+
+        # Dropdown for Head selection
+        head = st.radio('Select Head', range(min(all_heads), max(all_heads) + 1))  # Replace 'max_head' with the actual max head number
+
+
+        # Update receiving_type based on selection
+        st.session_state['receiving_type'] = f'WITH_CUSTOM_HEAD[{layer}, {head}]'
+        st.session_state['output_type'] = 'WITH_SAME_AS_RECEIVING_HEAD'
+        st.session_state['scaling'] = st.radio("Scaling", list(scalings))
+    else:
+        output_types = {r[0] for r in options}
+        receiving_types = {r[1] for r in options}
+        
+
+        st.session_state['output_type'] = st.radio("Output Type", list(output_types))
+        st.session_state['receiving_type'] = st.radio("Receiving Type", list(receiving_types))
+        st.session_state['scaling'] = st.radio("Scaling", list(scalings))
 
     if st.session_state['output_type'] and st.session_state['receiving_type'] and st.session_state['scaling']:
         orig_de, new_de, heads = results[(st.session_state['output_type'], st.session_state['receiving_type'], st.session_state['scaling'])]
