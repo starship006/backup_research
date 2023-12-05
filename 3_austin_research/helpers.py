@@ -589,3 +589,19 @@ def get_top_self_repair_prompts(logits, heads = None, mlp_layers = None, topk = 
         change_in_direct_effect = change_in_direct_effect.masked_fill(~mask_direct_effect, -99999)
         topk_indices = topk_of_Nd_tensor(change_in_direct_effect, k = topk)
     return topk_indices
+
+
+
+def is_notebook() -> bool:
+    try:
+        shell = get_ipython().__class__.__name__
+        if shell == 'ZMQInteractiveShell':
+            return True   # Jupyter notebook or qtconsole
+        elif shell == 'TerminalInteractiveShell':
+            return False  # Terminal running IPython
+        else:
+            return False  # Other type (?)
+    except NameError:
+        return False 
+    
+    

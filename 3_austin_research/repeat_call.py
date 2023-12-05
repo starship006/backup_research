@@ -3,9 +3,9 @@
 import subprocess
 
 model_names = [
-    "gpt2-small",
-    "gpt2-medium",
-    "gpt2-large",
+    #"gpt2-small",
+    #"gpt2-medium",
+    #"gpt2-large",
     "opt-125m",
     "opt-410m",
     "gpt-neo-125M",
