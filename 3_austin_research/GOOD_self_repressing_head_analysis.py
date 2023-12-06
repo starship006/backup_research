@@ -7,6 +7,7 @@ I need to explicitly tie this to model iterativity. We should see if the output 
 Heads to definitely look at:
  - gpt2small 10.5, which is second highest activating
  - opt 1.3b 21.7, which is third highest activating
+ - gpt2medium 22.8, which i found in custom head
  
 """
 # %%
@@ -16,18 +17,16 @@ from enum import Enum
 from imports import *
 from GOOD_helpers import *
 from reused_hooks import overwrite_activation_hook
-# %%
 
 
 # %% Constants
-    
 in_notebook_mode = is_notebook()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if in_notebook_mode:
     print("Running in notebook mode")
     #%load_ext autoreload
     #%autoreload 2
-    model_name = "gpt2-small"
+    model_name = "gpt2-medium"
 else:
     print("Running in script mode")
     parser = argparse.ArgumentParser()
@@ -71,9 +70,9 @@ if in_notebook_mode:
 
 
 # %%
-head_to_ablate = (10, 5)
+head_to_ablate = (19, 6)
 new_cache = act_patch(model, owt_tokens, [Node("z", i, j) for (i,j) in [head_to_ablate]], return_item, corrupted_owt_tokens, apply_metric_to_cache = True)
-ablated_per_head_direct_effect, ablated_all_layer_direct_effect = collect_direct_effect(new_cache, correct_tokens=owt_tokens, model = model, display = False, collect_individual_neurons = False)
+ablated_per_head_direct_effect, ablated_all_layer_direct_effect = collect_direct_effect(new_cache, correct_tokens=owt_tokens, model = model, display = False, collect_individual_neurons = False, cache_for_scaling=cache)
 
 
 all_head_diff: Float[Tensor, "layer head batch pos"] = (ablated_per_head_direct_effect - per_head_direct_effect)
@@ -104,23 +103,69 @@ def look_for_mean_self_repair():
 
 look_for_mean_self_repair()
 # %%
-top_indicies = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], 30)
-batch = top_indicies[4][0]
-pos = top_indicies[4][1]
+def output_self_repair_on_single_top_instance(batch: Union[int, None] = None, pos: Union[int, None] = None,
+                                              index_top: Union[int, None] = None):
+    if batch is None or pos is None:
+        top_indicies = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
+        batch = top_indicies[index_top][0]
+        pos = top_indicies[index_top][1]
 
-index_head_self_repair = (ablated_per_head_direct_effect - per_head_direct_effect)[..., batch, pos]
-index_mlp_self_repair = (ablated_all_layer_direct_effect - all_layer_direct_effect)[..., batch, pos]
-
-
-if in_notebook_mode:
-        show_input(index_head_self_repair,
-                index_mlp_self_repair,
-                title = f"Self-repair of heads and MLP Layers upon ablating {head_to_ablate} on index {batch, pos}")
+    index_head_self_repair = (ablated_per_head_direct_effect - per_head_direct_effect)[..., batch, pos]
+    index_mlp_self_repair = (ablated_all_layer_direct_effect - all_layer_direct_effect)[..., batch, pos]
 
 
+    if in_notebook_mode:
+            show_input(index_head_self_repair,
+                    index_mlp_self_repair,
+                    title = f"Self-repair of heads and MLP Layers upon ablating {head_to_ablate} on index {batch, pos}")
+
+
+index_top = 0
+top_indicies = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
+batch = top_indicies[index_top][0]
+pos = top_indicies[index_top][1]
+output_self_repair_on_single_top_instance(batch = batch, pos = pos)
+# %%
+def task_vector_influence(scaling: int, batch: int, pos: int):
+    new_direct_effects = torch.zeros((model.cfg.n_layers, model.cfg.n_heads)).to(device)
+    new_mlp_direct_effects = torch.zeros((model.cfg.n_layers)).to(device)
+
+    # keep the batch to work with functions later
+    task_vector: Float[Tensor, "batch d_model"] = cache[utils.get_act_name("result", head_to_ablate[0])][:, pos, head_to_ablate[1], :]
+
+
+    for layer in range(model.cfg.n_layers):
+        model.reset_hooks()
+        model.add_hook(utils.get_act_name("resid_pre", layer), partial(add_vector_to_resid, vector = task_vector * scaling, positions = pos))    
+        new_logits, new_cache = model.run_with_cache(clean_tokens)
+        model.reset_hooks()
+        
+        # measure new direct effects of heads in layer
+        new_per_head_direct_effect, new_all_layer_direct_effect = collect_direct_effect(new_cache, correct_tokens=clean_tokens,
+                                                                                model = model, display=False)
+        
+        new_direct_effects[layer] = new_per_head_direct_effect[layer, :, batch, pos]
+        new_mlp_direct_effects[layer] = new_all_layer_direct_effect[layer, batch, pos]
+        
+    return new_direct_effects, new_mlp_direct_effects
+
+new_direct_effects, new_mlp_direct_effects = task_vector_influence(scaling = -3, batch = batch, pos = pos)
+# %%
+show_input(new_direct_effects - per_head_direct_effect[:, :, batch, pos],
+           new_mlp_direct_effects - all_layer_direct_effect[:, batch, pos],
+           title = f"Self-repair of heads and MLP Layers upon ablating {head_to_ablate} on index {batch, pos} with scaling {scaling}")    
 
 
 # %%
+show_input(per_head_direct_effect[:, :, batch, pos],
+           all_layer_direct_effect[:, batch, pos],
+           title = f"Direct effect of heads and MLP Layers on index {batch, pos}")    
+
+
+
+
+
+# %% BELOW IS TEST CODE --- ALL FROM OTHER FILES
 class output_source(Enum):
     WITH_SAME_AS_RECEIVING_HEAD = 1
     WITH_RANDOM_HEAD = 2
@@ -237,7 +282,7 @@ def plot_results(original_de, new_de, receive_heads, scaling, output_type, recei
 
     return fig
 
-scaling_factors = [5]
+scaling_factors = [-2]
 def loop_and_analyze():
     results = {}
     
@@ -253,7 +298,6 @@ def loop_and_analyze():
             #     print("already did this comp")
             #     continue
             
-            print("starting new comp")
             orig_de, new_de, heads = analyze_constant_head(output_type, receiving_type, scaling = scaling, custom_head=custom_head)
             
             results[key] = (orig_de, new_de, heads)

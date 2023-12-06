@@ -230,7 +230,8 @@ def analyze_constant_head(output_type, receiving_type, scaling, custom_head = No
     return original_de, new_de, receive_heads
 # %
 # %%
-scaling_factors = [1, 2, 3, 5, 8]
+scaling_factors = [1, 3, 5]
+#scaling_factors = [1, 2, 3, 5, 8]
 def loop_and_analyze():
     results = {}
     
