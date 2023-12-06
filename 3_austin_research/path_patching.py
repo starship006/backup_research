@@ -838,6 +838,7 @@ def _act_patch_single(
 
     # Call this at the start, just in case! This also clears context by default
     model.reset_hooks()
+    #print("HAH I RESET HOOK LOL")
 
     batch_size, seq_len = new_cache["z", 0].shape[:2]
 
@@ -886,7 +887,7 @@ def act_patch(
         new_cache = ActivationCache({k: t.zeros_like(v) for k, v in cache.items()}, model=model)
     elif new_cache is None:
         _, new_cache = model.run_with_cache(new_input, return_type=None)
-
+    #print("act patching")
     # Get out backend patching function (fix all the arguments we won't be changing)
     act_patch_single = partial(
         _act_patch_single,

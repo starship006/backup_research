@@ -4,15 +4,15 @@ This code is responsible for making the 'thresholded self-repair' graphs.
 # %%
 from imports import *
 # %%
-#%load_ext autoreload
-#%autoreload 2
-
+%load_ext autoreload
+%autoreload 2
+from path_patching import act_patch
 from GOOD_helpers import *
 # %% Constants
-in_notebook_mode = False
+in_notebook_mode = is_notebook()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if in_notebook_mode:
-    model_name = "gpt2-small"
+    model_name = "pythia-160m"
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
@@ -43,11 +43,26 @@ corrupted_owt_tokens = all_owt_tokens[BATCH_SIZE:BATCH_SIZE * 2][:, :PROMPT_LEN]
 assert owt_tokens.shape == corrupted_owt_tokens.shape == (BATCH_SIZE, PROMPT_LEN)
 # %%
 logits, cache = model.run_with_cache(owt_tokens)
+corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_owt_tokens)
 # %%
 per_head_direct_effect, all_layer_direct_effect = collect_direct_effect(cache, correct_tokens=owt_tokens, model = model, display = in_notebook_mode, collect_individual_neurons = False)
 if in_notebook_mode:
     show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)), title = "Direct Effect of Heads and MLP Layers")
 # %%
+def new_ld_upon_sample_ablation_calc_with_frozen_ln(heads = None, mlp_layers = None):
+    assert heads != None and len(heads) == 1 and mlp_layers == None
+    
+    model.reset_hooks()
+    corrupted_output: Float["batch pos d_head"] = corrupted_cache[utils.get_act_name("z",  heads[0][0])][...,  heads[0][1], :]
+    model.add_hook(utils.get_act_name("z", heads[0][0]), partial(replace_output_hook, new_output = corrupted_output, head = heads[0][1]))
+    model.add_hook('ln_final.hook_scale', partial(replace_model_component_completely, new_model_comp = cache['ln_final.hook_scale']))
+    ablated_logits = model(owt_tokens)
+    model.reset_hooks()
+    # get change in direct effect compared to original
+    avg_correct_logit_score = get_correct_logit_score(ablated_logits, owt_tokens)
+    return avg_correct_logit_score
+    
+
 def new_ld_upon_sample_ablation_calc(heads = None, mlp_layers = None, num_runs = 5):
     """
     runs activation patching over component and returns new avg_correct_logit_score, averaged over num_runs runs
@@ -75,7 +90,7 @@ def new_ld_upon_sample_ablation_calc(heads = None, mlp_layers = None, num_runs =
     avg_correct_logit_score = get_correct_logit_score(avg_logits, owt_tokens)
     return avg_correct_logit_score
 
-def get_thresholded_change_in_logits(heads = None, mlp_layers = None, thresholds = [0.5]):
+def get_thresholded_change_in_logits(heads = None, mlp_layers = None, thresholds = [0.5], freez_ln = False):
     """"
     this function calculates direct effect of component on clean and sample ablation,
     and then returns an averaged direct effect and compensatory response effect of the component
@@ -107,8 +122,11 @@ def get_thresholded_change_in_logits(heads = None, mlp_layers = None, thresholds
     if mlp_layers != None:
         nodes += [Node("mlp_out", layer) for layer in mlp_layers]
 
-
-    change_in_logits = new_ld_upon_sample_ablation_calc(heads, mlp_layers) - get_correct_logit_score(logits, owt_tokens)
+    if freez_ln:
+        change_in_logits = new_ld_upon_sample_ablation_calc_with_frozen_ln(heads, mlp_layers) - get_correct_logit_score(logits, owt_tokens)
+    else:
+        change_in_logits = new_ld_upon_sample_ablation_calc(heads, mlp_layers) - get_correct_logit_score(logits, owt_tokens)
+        
     # 3) filter for indices wherer per_head_direct_effect is greater than threshold
     to_return = {}
     for threshold in thresholds:
@@ -135,7 +153,7 @@ thresholded_count = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.
 
 for layer in tqdm(range(model.cfg.n_layers)):
     for head in range(model.cfg.n_heads):
-        dict_results = get_thresholded_change_in_logits(heads = [(layer, head)], thresholds = thresholds)
+        dict_results = get_thresholded_change_in_logits(heads = [(layer, head)], thresholds = thresholds, freez_ln = True)
         for i, threshold in enumerate(thresholds):
             thresholded_de[i, layer, head] = dict_results[f"de_{threshold}"]
             thresholded_cil[i, layer, head] = dict_results[f"cil_{threshold}"]

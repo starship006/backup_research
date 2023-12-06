@@ -17,8 +17,6 @@ from enum import Enum
 from imports import *
 from GOOD_helpers import *
 from reused_hooks import overwrite_activation_hook
-
-
 # %% Constants
 in_notebook_mode = is_notebook()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -26,7 +24,7 @@ if in_notebook_mode:
     print("Running in notebook mode")
     #%load_ext autoreload
     #%autoreload 2
-    model_name = "gpt2-medium"
+    model_name = "pythia-410m"
 else:
     print("Running in script mode")
     parser = argparse.ArgumentParser()
@@ -70,10 +68,16 @@ if in_notebook_mode:
 
 
 # %%
-head_to_ablate = (19, 6)
+head_to_ablate = (17,4)
 new_cache = act_patch(model, owt_tokens, [Node("z", i, j) for (i,j) in [head_to_ablate]], return_item, corrupted_owt_tokens, apply_metric_to_cache = True)
-ablated_per_head_direct_effect, ablated_all_layer_direct_effect = collect_direct_effect(new_cache, correct_tokens=owt_tokens, model = model, display = False, collect_individual_neurons = False, cache_for_scaling=cache)
+new_logits = act_patch(model, owt_tokens, [Node("z", i, j) for (i,j) in [head_to_ablate]], return_item, corrupted_owt_tokens, apply_metric_to_cache = False)
 
+FREEZE_FINAL_LN = True
+
+if FREEZE_FINAL_LN:
+    ablated_per_head_direct_effect, ablated_all_layer_direct_effect = collect_direct_effect(new_cache, correct_tokens=owt_tokens, model = model, display = False, collect_individual_neurons = False, cache_for_scaling = cache)
+else:
+    ablated_per_head_direct_effect, ablated_all_layer_direct_effect = collect_direct_effect(new_cache, correct_tokens=owt_tokens, model = model, display = False, collect_individual_neurons = False)
 
 all_head_diff: Float[Tensor, "layer head batch pos"] = (ablated_per_head_direct_effect - per_head_direct_effect)
 all_mlp_diff: Float[Tensor, "layer batch pos"] = (ablated_all_layer_direct_effect - all_layer_direct_effect)
@@ -119,8 +123,19 @@ def output_self_repair_on_single_top_instance(batch: Union[int, None] = None, po
                     index_mlp_self_repair,
                     title = f"Self-repair of heads and MLP Layers upon ablating {head_to_ablate} on index {batch, pos}")
 
-
-index_top = 0
+    print("Original logit of correct token: ", logits[batch, pos, owt_tokens[batch, pos]])
+    print("New logit of correct token: ", new_logits[batch, pos, owt_tokens[batch, pos]])
+    print("Difference = ", new_logits[batch, pos, owt_tokens[batch, pos]] - logits[batch, pos, owt_tokens[batch, pos]])
+    
+    sum = index_head_self_repair.sum() + index_mlp_self_repair.sum()
+    print("Value of target head: ", index_head_self_repair[head_to_ablate[0], head_to_ablate[1]])
+    print("Sum of all boxes above: ", sum)
+    print("LN Scaling old cache", cache['ln_final.hook_scale'][batch, pos])
+    print("LN Scaling new cache", new_cache['ln_final.hook_scale'][batch, pos])
+    
+    print("Sum of all clean DE: ", per_head_direct_effect[..., batch, pos].sum() + all_layer_direct_effect[..., batch, pos].sum())
+    print("Sum of all corrupted DE: ", ablated_per_head_direct_effect[..., batch, pos].sum() + ablated_all_layer_direct_effect[..., batch, pos].sum())
+index_top = 10
 top_indicies = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
 batch = top_indicies[index_top][0]
 pos = top_indicies[index_top][1]
@@ -149,11 +164,12 @@ def task_vector_influence(scaling: int, batch: int, pos: int):
         
     return new_direct_effects, new_mlp_direct_effects
 
-new_direct_effects, new_mlp_direct_effects = task_vector_influence(scaling = -3, batch = batch, pos = pos)
+scaling = 0
+new_direct_effects, new_mlp_direct_effects = task_vector_influence(scaling = scaling, batch = batch, pos = pos)
 # %%
 show_input(new_direct_effects - per_head_direct_effect[:, :, batch, pos],
            new_mlp_direct_effects - all_layer_direct_effect[:, batch, pos],
-           title = f"Self-repair of heads and MLP Layers upon ablating {head_to_ablate} on index {batch, pos} with scaling {scaling}")    
+           title = f"Diff in head activation when adding {head_to_ablate} output with scaling {scaling} on index {batch, pos}")    
 
 
 # %%

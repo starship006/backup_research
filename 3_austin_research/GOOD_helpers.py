@@ -354,3 +354,35 @@ def is_notebook() -> bool:
             return False  # Other type (?)
     except NameError:
         return False 
+    
+    
+def replace_output_hook(
+    original_output: Float[Tensor, "batch seq head d_model"],
+    hook: HookPoint,
+    new_output: Float[Tensor, "batch seq d_model"],
+    head: int,
+) -> Float[Tensor, "batch seq d_model"]:
+    '''
+    Hook that replaces the output of a head with a new output
+    '''
+    #print(original_output.shape)
+    #print(new_output.shape)
+    assert len(original_output.shape) == 4
+    assert len(new_output.shape) == 3
+    assert original_output.shape[0] == new_output.shape[0]
+    assert original_output.shape[1] == new_output.shape[1]
+    assert original_output.shape[3] == new_output.shape[2]
+    
+    original_output[:, :, head, :] = new_output
+    
+    return original_output
+
+
+def replace_model_component_completely(
+    model_comp,
+    hook: HookPoint,
+    new_model_comp,
+):
+    if isinstance(model_comp, torch.Tensor):
+        model_comp[:] = new_model_comp
+    return new_model_comp
