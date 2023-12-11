@@ -377,6 +377,45 @@ def replace_output_hook(
     
     return original_output
 
+def replace_output_of_specific_batch_pos_hook(
+    original_output: Float[Tensor, "batch seq head d_model"],
+    hook: HookPoint,
+    new_output: Float[Tensor, "d_model"],
+    head: int,
+    batch: int,
+    pos: int,
+) -> Float[Tensor, "batch seq d_model"]:
+    '''
+    Hook that replaces the output of a head on a batch/pos with a new output
+    '''
+    #print(original_output.shape)
+    #print(new_output.shape)
+    assert len(original_output.shape) == 4
+    assert len(new_output.shape) == 1
+    assert original_output.shape[-1] == new_output.shape[-1]
+    
+    original_output[batch, pos, head, :] = new_output
+    
+    return original_output
+
+def replace_output_of_specific_MLP_batch_pos_hook(
+    original_output: Float[Tensor, "batch seq d_model"],
+    hook: HookPoint,
+    new_output: Float[Tensor, "d_model"],
+    batch: int,
+    pos: int,
+) -> Float[Tensor, "batch seq d_model"]:
+    '''
+    Hook that replaces the output of a MLP layer on a batch/pos with a new output
+    '''
+    
+    assert len(original_output.shape) == 3
+    assert len(new_output.shape) == 1
+    assert original_output.shape[-1] == new_output.shape[-1]
+    
+    original_output[batch, pos, :] = new_output
+    return original_output
+
 
 def replace_model_component_completely(
     model_comp,
@@ -386,3 +425,17 @@ def replace_model_component_completely(
     if isinstance(model_comp, torch.Tensor):
         model_comp[:] = new_model_comp
     return new_model_comp
+
+
+
+def get_single_correct_logit(logits: Float[Tensor, "batch pos d_vocab"],
+                     batch: int,
+                     pos: int,
+                     tokens: Float[Tensor, "batch pos"]):
+    """
+    get the correct logit at a specific batch and position (of the next token)
+    """
+    
+    correct_next_token = tokens[batch, pos + 1]
+    return logits[batch, pos, correct_next_token]
+    

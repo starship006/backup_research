@@ -69,7 +69,9 @@ if in_notebook_mode:
 
 # %%
 head_to_ablate = (17,4)
+model.reset_hooks()
 new_cache = act_patch(model, owt_tokens, [Node("z", i, j) for (i,j) in [head_to_ablate]], return_item, corrupted_owt_tokens, apply_metric_to_cache = True)
+model.reset_hooks()
 new_logits = act_patch(model, owt_tokens, [Node("z", i, j) for (i,j) in [head_to_ablate]], return_item, corrupted_owt_tokens, apply_metric_to_cache = False)
 
 FREEZE_FINAL_LN = True
@@ -113,6 +115,8 @@ def output_self_repair_on_single_top_instance(batch: Union[int, None] = None, po
         top_indicies = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
         batch = top_indicies[index_top][0]
         pos = top_indicies[index_top][1]
+        
+    assert batch is not None and pos is not None
 
     index_head_self_repair = (ablated_per_head_direct_effect - per_head_direct_effect)[..., batch, pos]
     index_mlp_self_repair = (ablated_all_layer_direct_effect - all_layer_direct_effect)[..., batch, pos]
@@ -123,9 +127,9 @@ def output_self_repair_on_single_top_instance(batch: Union[int, None] = None, po
                     index_mlp_self_repair,
                     title = f"Self-repair of heads and MLP Layers upon ablating {head_to_ablate} on index {batch, pos}")
 
-    print("Original logit of correct token: ", logits[batch, pos, owt_tokens[batch, pos]])
-    print("New logit of correct token: ", new_logits[batch, pos, owt_tokens[batch, pos]])
-    print("Difference = ", new_logits[batch, pos, owt_tokens[batch, pos]] - logits[batch, pos, owt_tokens[batch, pos]])
+    print("Original logit of correct token: ", get_single_correct_logit(logits, batch, pos, owt_tokens))
+    print("New logit of correct token: ", get_single_correct_logit(new_logits, batch, pos, owt_tokens))
+    print("Difference = ", get_single_correct_logit(new_logits, batch, pos, owt_tokens) - get_single_correct_logit(logits, batch, pos, owt_tokens))
     
     sum = index_head_self_repair.sum() + index_mlp_self_repair.sum()
     print("Value of target head: ", index_head_self_repair[head_to_ablate[0], head_to_ablate[1]])
@@ -135,11 +139,57 @@ def output_self_repair_on_single_top_instance(batch: Union[int, None] = None, po
     
     print("Sum of all clean DE: ", per_head_direct_effect[..., batch, pos].sum() + all_layer_direct_effect[..., batch, pos].sum())
     print("Sum of all corrupted DE: ", ablated_per_head_direct_effect[..., batch, pos].sum() + ablated_all_layer_direct_effect[..., batch, pos].sum())
-index_top = 10
+    
+
+def measure_self_repair_of_negative_heads(batch: Union[int, None] = None, pos: Union[int, None] = None,
+                                              index_top: Union[int, None] = None):
+    
+    if batch is None and pos is None and index_top is None:
+        top_indicies = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
+        batch = top_indicies[index_top][0]
+        pos = top_indicies[index_top][1]
+        
+    assert batch is not None and pos is not None
+    index_head_self_repair = (ablated_per_head_direct_effect - per_head_direct_effect)[..., batch, pos]
+    index_mlp_self_repair = (ablated_all_layer_direct_effect - all_layer_direct_effect)[..., batch, pos]
+    
+    # get all the negative components
+    head_contribution: Float[Tensor, "layer head"] = per_head_direct_effect[..., batch, pos]
+    mlp_contribution: Float[Tensor, "layer"] = all_layer_direct_effect[..., batch, pos]
+    
+    # sum up the negative components
+    negative_threshold = -0.1
+    negative_h_layer_index, negative_h_head_index = torch.where(head_contribution < negative_threshold)
+    self_repair_from_negative = 0
+    for h_layer, h_head in zip(negative_h_layer_index, negative_h_head_index):
+        self_repair_from_negative += index_head_self_repair[h_layer, h_head]
+        
+    negative_mlp_index = torch.where(mlp_contribution < negative_threshold)[0]
+    for mlp_layer in negative_mlp_index:
+        self_repair_from_negative += index_mlp_self_repair[mlp_layer]
+        
+    de_of_original_head = per_head_direct_effect[head_to_ablate[0], head_to_ablate[1], batch, pos] # 0.4
+    clean_logit = get_single_correct_logit(logits, batch, pos, owt_tokens) # 10
+    new_logit = get_single_correct_logit(new_logits, batch, pos, owt_tokens)  # 9.8
+    
+    expected_change_in_logit = -1 * de_of_original_head # -0.4
+    actual_change_in_logit = new_logit - clean_logit # -0.2
+    
+    print("Diff in logit: ", actual_change_in_logit)
+    print("Direct Effect of original head: ", de_of_original_head)
+    print("Total self-repair: ", actual_change_in_logit - expected_change_in_logit)
+    
+    print("Direct Effect change in negative components: ", self_repair_from_negative)
+    
+
+index_top = 5
 top_indicies = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
 batch = top_indicies[index_top][0]
 pos = top_indicies[index_top][1]
-output_self_repair_on_single_top_instance(batch = batch, pos = pos)
+#output_self_repair_on_single_top_instance(batch = batch, pos = pos)
+measure_self_repair_of_negative_heads(batch = batch, pos = pos)
+
+
 # %%
 def task_vector_influence(scaling: int, batch: int, pos: int):
     new_direct_effects = torch.zeros((model.cfg.n_layers, model.cfg.n_heads)).to(device)
