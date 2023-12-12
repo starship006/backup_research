@@ -24,7 +24,7 @@ if in_notebook_mode:
     print("Running in notebook mode")
     #%load_ext autoreload
     #%autoreload 2
-    model_name = "pythia-410m"
+    model_name = "pythia-160m"
 else:
     print("Running in script mode")
     parser = argparse.ArgumentParser()
@@ -44,8 +44,8 @@ model = HookedTransformer.from_pretrained(
 )
 model.set_use_attn_result(True)
 # %%
-batch_size = 60 # 30 -- if model large
-prompt_len = 40 # 15 -- if model large
+batch_size = 80 # 30 -- if model large
+prompt_len = 60 # 15 -- if model large
 
 owt_dataset = utils.get_dataset("owt")
 owt_dataset_name = "owt"    
@@ -68,7 +68,7 @@ if in_notebook_mode:
 
 
 # %%
-head_to_ablate = (17,4)
+head_to_ablate = (7,8)
 model.reset_hooks()
 new_cache = act_patch(model, owt_tokens, [Node("z", i, j) for (i,j) in [head_to_ablate]], return_item, corrupted_owt_tokens, apply_metric_to_cache = True)
 model.reset_hooks()
@@ -112,9 +112,9 @@ look_for_mean_self_repair()
 def output_self_repair_on_single_top_instance(batch: Union[int, None] = None, pos: Union[int, None] = None,
                                               index_top: Union[int, None] = None):
     if batch is None or pos is None:
-        top_indicies = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
-        batch = top_indicies[index_top][0]
-        pos = top_indicies[index_top][1]
+        top_indices = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
+        batch = top_indices[index_top][0]
+        pos = top_indices[index_top][1]
         
     assert batch is not None and pos is not None
 
@@ -142,12 +142,12 @@ def output_self_repair_on_single_top_instance(batch: Union[int, None] = None, po
     
 
 def measure_self_repair_of_negative_heads(batch: Union[int, None] = None, pos: Union[int, None] = None,
-                                              index_top: Union[int, None] = None):
+                                              index_top: Union[int, None] = None, verbose = False, negative_threshold = 0):
     
     if batch is None and pos is None and index_top is None:
-        top_indicies = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
-        batch = top_indicies[index_top][0]
-        pos = top_indicies[index_top][1]
+        top_indices = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
+        batch = top_indices[index_top][0]
+        pos = top_indices[index_top][1]
         
     assert batch is not None and pos is not None
     index_head_self_repair = (ablated_per_head_direct_effect - per_head_direct_effect)[..., batch, pos]
@@ -158,36 +158,265 @@ def measure_self_repair_of_negative_heads(batch: Union[int, None] = None, pos: U
     mlp_contribution: Float[Tensor, "layer"] = all_layer_direct_effect[..., batch, pos]
     
     # sum up the negative components
-    negative_threshold = -0.1
     negative_h_layer_index, negative_h_head_index = torch.where(head_contribution < negative_threshold)
     self_repair_from_negative = 0
+    negative_heads = []
     for h_layer, h_head in zip(negative_h_layer_index, negative_h_head_index):
         self_repair_from_negative += index_head_self_repair[h_layer, h_head]
+        negative_heads.append((h_layer.item(), h_head.item()))
         
+    
     negative_mlp_index = torch.where(mlp_contribution < negative_threshold)[0]
     for mlp_layer in negative_mlp_index:
         self_repair_from_negative += index_mlp_self_repair[mlp_layer]
         
     de_of_original_head = per_head_direct_effect[head_to_ablate[0], head_to_ablate[1], batch, pos] # 0.4
+    
     clean_logit = get_single_correct_logit(logits, batch, pos, owt_tokens) # 10
     new_logit = get_single_correct_logit(new_logits, batch, pos, owt_tokens)  # 9.8
     
     expected_change_in_logit = -1 * de_of_original_head # -0.4
     actual_change_in_logit = new_logit - clean_logit # -0.2
     
-    print("Diff in logit: ", actual_change_in_logit)
-    print("Direct Effect of original head: ", de_of_original_head)
-    print("Total self-repair: ", actual_change_in_logit - expected_change_in_logit)
     
-    print("Direct Effect change in negative components: ", self_repair_from_negative)
+    if verbose:
+        print("Diff in logit: ", actual_change_in_logit)
+        print("Direct Effect of original head: ", de_of_original_head)
+        print("Total self-repair: ", actual_change_in_logit - expected_change_in_logit)
+        print("Negative components: ", negative_heads, negative_mlp_index)
+        print("Direct Effect change in negative components: ", self_repair_from_negative)
+        print("Percent self-repair explained by negative components: ", self_repair_from_negative / (actual_change_in_logit - expected_change_in_logit))
+    
+    return self_repair_from_negative.item(), (actual_change_in_logit - expected_change_in_logit).item(), de_of_original_head.item()
     
 
-index_top = 5
-top_indicies = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
-batch = top_indicies[index_top][0]
-pos = top_indicies[index_top][1]
-#output_self_repair_on_single_top_instance(batch = batch, pos = pos)
-measure_self_repair_of_negative_heads(batch = batch, pos = pos)
+index_top = 0
+top_indices = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
+batch = top_indices[index_top][0]
+pos = top_indices[index_top][1]
+show_input(per_head_direct_effect[:, :, batch, pos],
+           all_layer_direct_effect[:, batch, pos],
+           title = f"Direct effect of heads and MLP Layers on index {batch, pos}")   
+
+output_self_repair_on_single_top_instance(batch = batch, pos = pos)
+print("-----")
+neg_change, self_repair, de_of_head = measure_self_repair_of_negative_heads(batch = batch, pos = pos, verbose=True)
+# %%
+
+def get_comp_values_from_function(measurement_function, de_threshold = 1):
+    self_repair_values = []
+    component_values = []
+    de_of_heads = []
+
+
+    top_indices = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], 1100)
+    index = 0
+    indices = []
+
+    while True:
+        indices.append(index)
+        batch = top_indices[index][0]
+        pos = top_indices[index][1]
+        
+        neg_change, self_repair, de_of_head = measurement_function(batch = batch, pos = pos)
+        self_repair_values.append(self_repair)
+        component_values.append(neg_change)
+        de_of_heads.append(de_of_head)
+        
+        index += 1
+        if de_of_head < de_threshold:   
+            print("BREAK") 
+            break
+                    
+    other_self_repair_values = []
+    other_component_values = []
+    other_de_of_heads = []
+    other_indices = []
+
+    while index < len(top_indices):
+        other_indices.append(index)
+        batch = top_indices[index][0]
+        pos = top_indices[index][1]
+        
+        neg_change, self_repair, de_of_head = measurement_function(batch = batch, pos = pos)
+        other_self_repair_values.append(self_repair)
+        other_component_values.append(neg_change)
+        other_de_of_heads.append(de_of_head)
+        
+        index += 1
+        
+        
+    return self_repair_values, component_values, de_of_heads, other_self_repair_values, other_component_values, other_de_of_heads, indices, other_indices
+        
+    
+# %%
+de_threshold = 1
+self_repair_values, negative_component_values, de_of_heads, other_self_repair_values, other_negative_component_values, other_de_of_heads, indices, other_indices = get_comp_values_from_function(measure_self_repair_of_negative_heads, de_threshold = de_threshold)
+
+# %%
+def create_hover_text(indices, de_values):
+    return [f"{i}| DE: {j}" for i, j in zip(indices, de_values)]
+
+def create_scatter_trace(x_values, y_values, de_values, indices, trace_name):
+    if indices != None:
+        print(indices)
+        hover_text = create_hover_text(indices, de_values)
+    else:
+        hover_text = None
+        
+    return go.Scatter(
+        x=x_values,
+        y=y_values,
+        mode='markers',
+        marker=dict(
+            size=3,
+            color=de_values,
+            colorbar=dict(title="DE of Head 1"),
+            colorscale="Viridis",
+            cmin=0,
+            cmax=3
+        ),
+        text=hover_text,
+        hoverinfo="text+x+y",
+        name=trace_name
+    )
+
+def create_figure(traces, x_label, y_label, title, head_to_ablate):
+    fig = go.Figure()
+
+    for trace in traces:
+        fig.add_trace(trace)
+
+    # Determine the range for the y=x line
+    all_x_values = [value for trace in traces for value in trace.x]
+    min_val, max_val = min(all_x_values), max(all_x_values)
+
+    # Add the y=x line
+    line_x = [min_val, max_val]
+    line_y = [min_val, max_val]
+    fig.add_trace(go.Scatter(x=line_x, y=line_y, mode='lines', name='y=x'))
+
+    # Set layout
+    fig.update_layout(
+        xaxis_title=x_label,
+        yaxis_title=y_label,
+        title=title.format(head_to_ablate=head_to_ablate)
+    )
+
+    return fig
+
+
+# %%
+trace1 = create_scatter_trace(
+    self_repair_values, negative_component_values, 
+    de_of_heads, indices, f'DE >= {de_threshold}'
+)
+trace2 = create_scatter_trace(
+    other_self_repair_values, other_negative_component_values, 
+    other_de_of_heads, other_indices, f'DE < {de_threshold}'
+)
+fig = create_figure(
+    [trace1, trace2], 
+    "Self-Repair = Change in logits", 
+    "Change in DE of Negative Components", 
+    "Self-repair vs Negative Component Contribution of all instances where {head_to_ablate}",
+    head_to_ablate
+)
+fig.show()
+# %% It all appears localised to a MLP layer. Let's check?
+
+def measure_self_repair_in_MLP_layer(batch: Union[int, None] = None, pos: Union[int, None] = None,
+                                              index_top: Union[int, None] = None, verbose = False, mlp_layer = -1):
+    
+    if batch is None and pos is None and index_top is None:
+        top_indices = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
+        batch = top_indices[index_top][0]
+        pos = top_indices[index_top][1]
+        
+    assert batch is not None and pos is not None
+    index_head_self_repair = (ablated_per_head_direct_effect - per_head_direct_effect)[..., batch, pos]
+    index_mlp_self_repair = (ablated_all_layer_direct_effect - all_layer_direct_effect)[..., batch, pos]
+    
+    # get all the negative components
+    head_contribution: Float[Tensor, "layer head"] = per_head_direct_effect[..., batch, pos]
+    mlp_contribution: Float[Tensor, "layer"] = all_layer_direct_effect[..., batch, pos]
+    
+    # get self-repair of MLP layer
+    mlp_layer_self_repair = index_mlp_self_repair[mlp_layer]
+    
+        
+    de_of_original_head = per_head_direct_effect[head_to_ablate[0], head_to_ablate[1], batch, pos] # 0.4
+    
+    clean_logit = get_single_correct_logit(logits, batch, pos, owt_tokens) # 10
+    new_logit = get_single_correct_logit(new_logits, batch, pos, owt_tokens)  # 9.8
+    
+    expected_change_in_logit = -1 * de_of_original_head # -0.4
+    actual_change_in_logit = new_logit - clean_logit # -0.2
+    
+    return mlp_layer_self_repair.item(), (actual_change_in_logit - expected_change_in_logit).item(), de_of_original_head.item()
+
+
+# %%
+mlp_layer = 11
+self_repair_values, specific_component_values, de_of_heads, other_self_repair_values, other_specific_component_values, other_de_of_heads, indices, other_indices = get_comp_values_from_function(partial(measure_self_repair_in_MLP_layer, mlp_layer = mlp_layer))
+
+
+# %%
+trace1 = create_scatter_trace(
+    self_repair_values, specific_component_values, 
+    de_of_heads, indices, f'DE >= {de_threshold}'
+)
+trace2 = create_scatter_trace(
+    other_self_repair_values, other_specific_component_values, 
+    other_de_of_heads, other_indices, f'DE < {de_threshold}'
+)
+fig = create_figure(
+    [trace1, trace2], 
+    "Self-Repair = Change in logits", 
+    f"Change in DE of MLP {mlp_layer}", 
+    f"Total Self-repair vs Self-repair in MLP {mlp_layer}",
+    head_to_ablate
+)
+fig.show()
+
+# %% okay JUST look at the individual values bruh
+mlp_DE = all_layer_direct_effect[mlp_layer, :].flatten().cpu()
+diff_mlp_DE = all_mlp_diff[mlp_layer, :].flatten().cpu()
+de_original_head = per_head_direct_effect[head_to_ablate[0], head_to_ablate[1], :, :].flatten().cpu()
+
+
+
+trace1 = create_scatter_trace(
+    mlp_DE, diff_mlp_DE, 
+    de_original_head, None, f'DE original head'
+)
+
+fig = create_figure(
+    [trace1], 
+    f"DE of MLP {mlp_layer}", 
+    f"Self-Repair in MLP {mlp_layer}", 
+    f"DE vs Self-repair in MLP {mlp_layer}",
+    head_to_ablate
+)
+fig.show()
+# %%
+post_ablation_DE = ablated_all_layer_direct_effect[mlp_layer, :].flatten().cpu()
+
+trace1 = create_scatter_trace(
+    mlp_DE, post_ablation_DE, 
+    de_original_head, None, f'DE original head'
+)
+
+fig = create_figure(
+    [trace1], 
+    f"DE of MLP {mlp_layer}", 
+    f"Post-ablation DE of MLP {mlp_layer}", 
+    "DE pre- and post- ablation",
+    head_to_ablate
+)
+fig.show()
+
+
 
 
 # %%
@@ -220,12 +449,8 @@ new_direct_effects, new_mlp_direct_effects = task_vector_influence(scaling = sca
 show_input(new_direct_effects - per_head_direct_effect[:, :, batch, pos],
            new_mlp_direct_effects - all_layer_direct_effect[:, batch, pos],
            title = f"Diff in head activation when adding {head_to_ablate} output with scaling {scaling} on index {batch, pos}")    
-
-
 # %%
-show_input(per_head_direct_effect[:, :, batch, pos],
-           all_layer_direct_effect[:, batch, pos],
-           title = f"Direct effect of heads and MLP Layers on index {batch, pos}")    
+ 
 
 
 
