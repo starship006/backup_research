@@ -3,6 +3,7 @@ This code is responsible for making the 'thresholded self-repair' graphs.
 """
 # %%
 from imports import *
+
 # %%
 %load_ext autoreload
 %autoreload 2
@@ -12,7 +13,7 @@ from GOOD_helpers import *
 in_notebook_mode = is_notebook()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if in_notebook_mode:
-    model_name = "pythia-160m"
+    model_name = "pythia-410m"
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
@@ -63,7 +64,7 @@ def new_ld_upon_sample_ablation_calc_with_frozen_ln(heads = None, mlp_layers = N
     return avg_correct_logit_score
     
 
-def new_ld_upon_sample_ablation_calc(heads = None, mlp_layers = None, num_runs = 5):
+def new_ld_upon_sample_ablation_calc(heads = None, mlp_layers = None, num_runs = 2):
     """
     runs activation patching over component and returns new avg_correct_logit_score, averaged over num_runs runs
     this is the average logit of the correct token upon num_runs sample ablations
@@ -153,7 +154,7 @@ thresholded_count = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.
 
 for layer in tqdm(range(model.cfg.n_layers)):
     for head in range(model.cfg.n_heads):
-        dict_results = get_thresholded_change_in_logits(heads = [(layer, head)], thresholds = thresholds, freez_ln = True)
+        dict_results = get_thresholded_change_in_logits(heads = [(layer, head)], thresholds = thresholds, freez_ln = False)
         for i, threshold in enumerate(thresholds):
             thresholded_de[i, layer, head] = dict_results[f"de_{threshold}"]
             thresholded_cil[i, layer, head] = dict_results[f"cil_{threshold}"]
@@ -309,7 +310,7 @@ def gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cre, threshol
         sliders=sliders,
         title=f"Thresholded Compensatory Response Effect vs Average Direct Effect in {model_name}" if not use_logits else f"Thresholded Change in Output Logits vs Average Direct Effect in {model_name}",
         xaxis_title="Average Direct Effect",
-        yaxis_title="Average Compensatory Response Effect",
+        yaxis_title="Average Change in Logits after Ablation (CRE)",
         hovermode="closest",
         updatemenus=[{
             'buttons': [
@@ -352,5 +353,5 @@ def gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cre, threshol
 # %%
 gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cil, thresholds, True, layout_horizontal=False)
 # %%
-#create_layered_scatter(thresholded_de[0], thresholded_cil[0], model, "dr", "cre", "de vs cre",)
+create_layered_scatter(thresholded_de[0], thresholded_cil[0], model, "dr", "cre", "de vs cre",)
 # %%

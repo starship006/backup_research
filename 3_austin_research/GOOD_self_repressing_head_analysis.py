@@ -1,4 +1,6 @@
 """
+The start of this document includes stuff related to LN acting as a self-repairer. If I keep using this doc, it may be in my interest to divide it.
+
 We've observed heads with robust self-repression. Let's figure out if there are nice trends here.
 
 I need to explicitly tie this to model iterativity. We should see if the output of these heads is tied to self-repair. And if so, how.
@@ -24,7 +26,7 @@ if in_notebook_mode:
     print("Running in notebook mode")
     #%load_ext autoreload
     #%autoreload 2
-    model_name = "pythia-160m"
+    model_name = "pythia-410m"
 else:
     print("Running in script mode")
     parser = argparse.ArgumentParser()
@@ -68,7 +70,7 @@ if in_notebook_mode:
 
 
 # %%
-head_to_ablate = (7,8)
+head_to_ablate = (23,12)
 model.reset_hooks()
 new_cache = act_patch(model, owt_tokens, [Node("z", i, j) for (i,j) in [head_to_ablate]], return_item, corrupted_owt_tokens, apply_metric_to_cache = True)
 model.reset_hooks()
@@ -110,7 +112,7 @@ def look_for_mean_self_repair():
 look_for_mean_self_repair()
 # %%
 def output_self_repair_on_single_top_instance(batch: Union[int, None] = None, pos: Union[int, None] = None,
-                                              index_top: Union[int, None] = None):
+                                              index_top: Union[int, None] = None, verbose = True):
     if batch is None or pos is None:
         top_indices = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
         batch = top_indices[index_top][0]
@@ -122,24 +124,43 @@ def output_self_repair_on_single_top_instance(batch: Union[int, None] = None, po
     index_mlp_self_repair = (ablated_all_layer_direct_effect - all_layer_direct_effect)[..., batch, pos]
 
 
-    if in_notebook_mode:
+    if in_notebook_mode and verbose:
             show_input(index_head_self_repair,
                     index_mlp_self_repair,
                     title = f"Self-repair of heads and MLP Layers upon ablating {head_to_ablate} on index {batch, pos}")
 
-    print("Original logit of correct token: ", get_single_correct_logit(logits, batch, pos, owt_tokens))
-    print("New logit of correct token: ", get_single_correct_logit(new_logits, batch, pos, owt_tokens))
-    print("Difference = ", get_single_correct_logit(new_logits, batch, pos, owt_tokens) - get_single_correct_logit(logits, batch, pos, owt_tokens))
+    original_logit = get_single_correct_logit(logits, batch, pos, owt_tokens)
+    actual_logit_diff = get_single_correct_logit(new_logits, batch, pos, owt_tokens) - get_single_correct_logit(logits, batch, pos, owt_tokens)
+    
+    if verbose:
+        print("Original logit of correct token: ", original_logit)
+        print("New logit of correct token: ", get_single_correct_logit(new_logits, batch, pos, owt_tokens))
+        print("Difference = ", actual_logit_diff)
     
     sum = index_head_self_repair.sum() + index_mlp_self_repair.sum()
-    print("Value of target head: ", index_head_self_repair[head_to_ablate[0], head_to_ablate[1]])
-    print("Sum of all boxes above: ", sum)
-    print("LN Scaling old cache", cache['ln_final.hook_scale'][batch, pos])
-    print("LN Scaling new cache", new_cache['ln_final.hook_scale'][batch, pos])
     
-    print("Sum of all clean DE: ", per_head_direct_effect[..., batch, pos].sum() + all_layer_direct_effect[..., batch, pos].sum())
-    print("Sum of all corrupted DE: ", ablated_per_head_direct_effect[..., batch, pos].sum() + ablated_all_layer_direct_effect[..., batch, pos].sum())
+    if verbose:
+        print("Value of target head: ", index_head_self_repair[head_to_ablate[0], head_to_ablate[1]])
+        print("Sum of all boxes above: ", sum)
+        print("LN Scaling old cache", cache['ln_final.hook_scale'][batch, pos])
+        print("LN Scaling new cache", new_cache['ln_final.hook_scale'][batch, pos])
+        
+        print("Sum of all clean DE: ", per_head_direct_effect[..., batch, pos].sum() + all_layer_direct_effect[..., batch, pos].sum())
+        print("Sum of all corrupted DE: ", ablated_per_head_direct_effect[..., batch, pos].sum() + ablated_all_layer_direct_effect[..., batch, pos].sum())
     
+    
+    ratio = cache['ln_final.hook_scale'][batch, pos] / new_cache['ln_final.hook_scale'][batch, pos]
+    
+    
+    change_from_ln_on_logits = original_logit - ratio * original_logit
+    C = change_from_ln_on_logits - ratio * (sum)
+    if verbose:
+        print("Predicted change: ", C)
+        print("Actual change:", actual_logit_diff)
+        print("Change due to JUST the LN acting on old logits", change_from_ln_on_logits)
+        print("Percent self-repair explained by LN on logits", change_from_ln_on_logits / (actual_logit_diff))
+    
+    return change_from_ln_on_logits, actual_logit_diff
 
 def measure_self_repair_of_negative_heads(batch: Union[int, None] = None, pos: Union[int, None] = None,
                                               index_top: Union[int, None] = None, verbose = False, negative_threshold = 0):
@@ -201,8 +222,44 @@ show_input(per_head_direct_effect[:, :, batch, pos],
 output_self_repair_on_single_top_instance(batch = batch, pos = pos)
 print("-----")
 neg_change, self_repair, de_of_head = measure_self_repair_of_negative_heads(batch = batch, pos = pos, verbose=True)
-# %%
+# %% See change due to LN acting just on existing logits
+total_to_check = int((80 * 60) / 5)
+changes_from_LNs = torch.zeros(total_to_check)
+total_logit_diffs = torch.zeros(total_to_check)
+ratio = torch.zeros(total_to_check)
 
+for index_top in range(total_to_check):
+    top_indices = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
+    batch = top_indices[index_top][0]
+    pos = top_indices[index_top][1]
+    change_from_ln_on_logits, actual_logit_diff = output_self_repair_on_single_top_instance(batch = batch, pos = pos, verbose = False)
+    changes_from_LNs[index_top] = (-1 * change_from_ln_on_logits)
+    total_logit_diffs[index_top] = actual_logit_diff
+    ratio[index_top] = min(max(change_from_ln_on_logits / actual_logit_diff, 0), 1)
+ 
+
+
+# %%
+# Create the scatter plot
+fig = px.scatter(x=total_logit_diffs, y=changes_from_LNs, color=ratio)
+
+# Add y = -x line
+x_range = np.linspace(total_logit_diffs.min(), total_logit_diffs.max(), 100)
+fig.add_scatter(x=x_range, y=x_range, mode='lines', name='y = x')
+
+# Update the layout with labels
+fig.update_layout(
+    xaxis_title="Total Logit Difference",
+    yaxis_title="Self-Repair from LayerNorm",
+    title = f"Logit Difference when ablating {head_to_ablate} vs Self-Repair from LayerNorm acting on everything else (for top-20% of head DE)"
+)
+
+# Show the figure
+fig.show()
+
+#################################### ABOVE IS THE LN EXPLORATION
+
+# %%
 def get_comp_values_from_function(measurement_function, de_threshold = 1):
     self_repair_values = []
     component_values = []
