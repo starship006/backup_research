@@ -15,6 +15,8 @@ Heads to definitely look at:
 # %%
 import sys
 from enum import Enum
+
+
 # %%
 from imports import *
 from GOOD_helpers import *
@@ -227,6 +229,7 @@ total_to_check = int((80 * 60) / 5)
 changes_from_LNs = torch.zeros(total_to_check)
 total_logit_diffs = torch.zeros(total_to_check)
 ratio = torch.zeros(total_to_check)
+de_of_head = torch.zeros(total_to_check)
 
 for index_top in range(total_to_check):
     top_indices = topk_of_Nd_tensor(per_head_direct_effect[head_to_ablate[0], head_to_ablate[1]], index_top + 1)
@@ -236,12 +239,13 @@ for index_top in range(total_to_check):
     changes_from_LNs[index_top] = (-1 * change_from_ln_on_logits)
     total_logit_diffs[index_top] = actual_logit_diff
     ratio[index_top] = min(max(change_from_ln_on_logits / actual_logit_diff, 0), 1)
+    de_of_head[index_top] = per_head_direct_effect[head_to_ablate[0], head_to_ablate[1], batch, pos]
  
 
 
 # %%
 # Create the scatter plot
-fig = px.scatter(x=total_logit_diffs, y=changes_from_LNs, color=ratio)
+fig = px.scatter(x=total_logit_diffs, y=changes_from_LNs, color=de_of_head)
 
 # Add y = -x line
 x_range = np.linspace(total_logit_diffs.min(), total_logit_diffs.max(), 100)
