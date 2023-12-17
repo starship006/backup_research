@@ -29,3 +29,22 @@ def overwrite_activation_hook(
     ):
         assert original_activation.shape == what_to_overwrite_with.shape
         return what_to_overwrite_with
+    
+    
+
+
+def add_and_replace_hook(
+    original_activation,
+    hook,
+    what_to_overwrite_with,
+    added_component_in_list
+):
+    assert original_activation.shape == what_to_overwrite_with.shape == added_component_in_list[0].shape
+    
+    original_activation[:] = what_to_overwrite_with + added_component_in_list[0]
+
+
+def store_item_in_tensor(item: Tensor, hook, tensor: Tensor):
+    assert item.shape == tensor.shape
+    tensor[:] = item
+    return tensor
