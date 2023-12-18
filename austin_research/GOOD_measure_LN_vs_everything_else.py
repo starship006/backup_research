@@ -42,7 +42,7 @@ model = HookedTransformer.from_pretrained(
     refactor_factored_attn_matrices = False,
     device = device,
 )
-model.set_use_attn_result(True)
+model.set_use_attn_result(False)
 # %%
 batch_size = 50 # 30 -- if model large
 prompt_len = 30 # 15 -- if model large
@@ -68,7 +68,7 @@ if in_notebook_mode:
 
 correct_logit = get_correct_logit_score(logits, owt_tokens)
 # %%
-head_to_ablate = (20, 14)
+head_to_ablate = (22, 11)
 model.reset_hooks()
 new_cache = act_patch(model, owt_tokens, [Node("z", i, j) for (i,j) in [head_to_ablate]], return_item, corrupted_owt_tokens, apply_metric_to_cache = True)
 model.reset_hooks()
@@ -101,20 +101,37 @@ change_in_de_all_layers = all_mlp_diff.sum((0))
 
 # %%
 def make_scatter(name_data_tuple, x_data, x_label = "Direct Effect of Head", 
-                 plot_y_equal_x = False, plot_y_equal_minus_x = True):
+                 plot_y_equal_x = False, plot_y_equal_minus_x = True, indices = None, title = None):
     traces = []
+    if indices is not None:
+        indexed_x_data = x_data[indices]
+    else:
+        indexed_x_data = x_data
+    
+    hover_texts = [f'Index: {i}' for i in range(len(indexed_x_data))]
+    
     for y_data, name in name_data_tuple:
-        assert len(x_data) == len(y_data)
         assert type(name) == str
+        if indices is not None:
+            indexed_y_data = y_data[indices]
+        else:
+            indexed_y_data = y_data
+        
+        #print(f"len(x_data) = {len(indexed_x_data)}")
+        #print(f"len(y_data) = {len(indexed_y_data)}")
+        assert len(indexed_x_data) == len(indexed_y_data)
+        
         traces.append(go.Scatter(
-            x = x_data,
-            y = y_data,
+            x = indexed_x_data,
+            y = indexed_y_data,
             mode = 'markers',
             name = name,
-            marker = dict(size = 2)  
+            marker = dict(size = 2),
+            text = hover_texts,  # Add the hover text to the trace
+            hoverinfo = 'text+x+y'  # Display hover text along with x and y values  
         ))
     
-    x_line = [min(x_data), max(x_data)]
+    x_line = [min(indexed_x_data), max(indexed_x_data)]
     data = traces
     
     if plot_y_equal_minus_x:
@@ -138,9 +155,12 @@ def make_scatter(name_data_tuple, x_data, x_label = "Direct Effect of Head",
         )
         data = data + [trace3]
     
+    if title is None:
+        title = f'Effects of Ablating Head {head_to_ablate} | ln frozen for DE = {FREEZE_FINAL_LN}'
+
     
     layout = go.Layout(
-        title = f'Effects of Ablating Head {head_to_ablate} | ln frozen for DE = {FREEZE_FINAL_LN}',
+        title = title,
         xaxis = dict(title = x_label),
         yaxis = dict(title = 'Measured Values'),
         hovermode = 'closest'
@@ -165,16 +185,13 @@ change_in_all_heads_except_ablated = change_in_de_all_heads.flatten().cpu() - al
 
 make_scatter([(change_in_de_all_heads.flatten().cpu(), "Change in DE of all heads"),
               (change_in_de_all_layers.flatten().cpu(), "Change in DE of all layers"),
-              #(all_mlp_diff[-1].flatten().cpu(), "Change in DE of last layer"),
+              (all_mlp_diff[-1].flatten().cpu(), "Change in DE of last layer"),
               (all_mlp_diff[-2].flatten().cpu(), "Change in DE of second to last layer"),
               (all_mlp_diff[-3].flatten().cpu(), "Change in DE of third to last layer"),
               (change_in_all_heads_except_ablated.cpu(), "Change in DE of all heads EXCEPT ablated head"),]
               , x_data, plot_y_equal_x = True)
 
-
 # %%
-
-
 make_scatter([(change_in_all_heads_except_ablated.cpu(), "Change in DE of all heads EXCEPT ablated head"),
               #(change_in_de_all_layers.flatten().cpu(), "Change in DE of all layers"),
               (all_mlp_diff[-1].flatten().cpu(), "Change in DE of last layer")]
@@ -183,10 +200,49 @@ make_scatter([(change_in_all_heads_except_ablated.cpu(), "Change in DE of all he
 make_scatter([(ablated_all_layer_direct_effect[-1].flatten().cpu(), "DE of last layer after ablation"),
                ], all_layer_direct_effect[-1].flatten().cpu(), x_label = "DE of last layer", plot_y_equal_x= True, plot_y_equal_minus_x= False)
 # %%
-significant_indicies = torch.where(per_head_direct_effect_flatten > 1.5)
-make_scatter([(ablated_all_layer_direct_effect[-1].flatten()[significant_indicies].cpu(), "DE of last layer after ablation"),
-               ], all_layer_direct_effect[-1].flatten()[significant_indicies].cpu(), x_label = "DE of last layer", plot_y_equal_x= True, plot_y_equal_minus_x= False)
+
+significant_indices = torch.where(per_head_direct_effect_flatten > 2)[0]
+
+make_scatter([(change_in_de_all_heads.flatten().cpu(), "Change in DE of all heads"),
+              (change_in_de_all_layers.flatten().cpu(), "Change in DE of all layers"),
+              (all_mlp_diff[-1].flatten().cpu(), "Change in DE of last layer"),
+              (all_mlp_diff[-2].flatten().cpu(), "Change in DE of second to last layer"),
+              (all_mlp_diff[-3].flatten().cpu(), "Change in DE of third to last layer"),
+              (change_in_all_heads_except_ablated.cpu(), "Change in DE of all heads EXCEPT ablated head"),
+              (change_in_de_total, "Change in DE of all heads and layers"),]
+              , x_data, plot_y_equal_x = True, indices = significant_indices)
+
+# %%
+# "Unflattening" the indices
+batch, pos_size = per_head_direct_effect[head_to_ablate].shape
 
 
+# Convert flattened indices to 2D indices
+batch_indices = significant_indices // pos_size
+pos_indices = significant_indices % pos_size
 
+# %%
+index = 44
+# plot the change in DE of all heads on index
+show_input(
+    all_head_diff[:, :, batch_indices[index], pos_indices[index]],
+    all_mlp_diff[:, batch_indices[index], pos_indices[index]],
+    title = f"Change in DE of all heads on batch {batch_indices[index]}, pos {pos_indices[index]} | DE = {per_head_direct_effect[head_to_ablate][batch_indices[index], pos_indices[index]]}",
+)
+
+# plot original DE
+show_input(
+    per_head_direct_effect[:, :, batch_indices[index], pos_indices[index]],
+    all_layer_direct_effect[:, batch_indices[index], pos_indices[index]],
+    title = f"DE on batch {batch_indices[index]}, pos {pos_indices[index]}",
+)
+
+# %%
+
+
+make_scatter([(all_mlp_diff[-1].flatten().cpu(), "Change in DE of last layer")],
+             x_data = all_layer_direct_effect[-1].flatten().cpu(),
+             x_label = "DE of last layer",
+             title = f"DE of last MLP layer vs Change in DE of last MLP layer when ablating {head_to_ablate}",
+             indices=significant_indices)
 # %%

@@ -1,6 +1,8 @@
 """
 This code tests the hypothesis that moving the residual stream from layer NMH layer to downstream layer causes one layer down is similar
 to just ablating a head. It finds this coorelation strongly on a the IOI example.
+
+This code is similar to GOOD_IOI_iterative_experiments, but scales multiple models
 """
 # %%
 from imports import *
@@ -12,7 +14,7 @@ from reused_hooks import overwrite_activation_hook
 %autoreload 2
 from GOOD_helpers import *
  
-in_notebook_mode = False
+in_notebook_mode = True
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 use_owt_originally = True
 
@@ -43,7 +45,7 @@ all_ablation_changes = []
 used_models = []
 
 for model_name in model_names:
-    
+    # Setup
     safe_model_name = model_name.replace("/", "_")
     model = HookedTransformer.from_pretrained(
         model_name,
@@ -54,7 +56,6 @@ for model_name in model_names:
         device = device,
     )
     model.set_use_attn_result(True)
-    
     
     
     PROMPTS, ANSWERS, ANSWER_INDICIES = generate_ioi_prompts(model, 30)
@@ -84,7 +85,7 @@ for model_name in model_names:
         indexed_answers = clean_tokens.gather(-1, unsqueezed_answers_idx)
         assert torch.all(torch.eq(answer_tokens, indexed_answers))
         
-        
+    # Get direct effect data
     logits, cache = model.run_with_cache(clean_tokens)
     
      
@@ -113,16 +114,20 @@ for model_name in model_names:
     def run_forward_pass_and_copy_layer(from_activation: str, to_activation: str):
         """
         does a forwawrd pass but copies the residuals tream from one activation to another
+        DON'T USE LOGITS! it's just equivalent to zero ablating an entire layer
         """
 
         from_activation = cache[from_activation]
         model.reset_hooks()
         model.add_hook(to_activation, partial(overwrite_activation_hook, what_to_overwrite_with=from_activation))
         
-        new_logits, new_cache = model.run_with_cache(clean_tokens)
+        _, new_cache = model.run_with_cache(clean_tokens)
         model.reset_hooks()
-        return new_logits, new_cache
+        return new_cache
      
+     
+     
+    # Do a forward pass of copying the residual stream from one layer - the layer with the most DE - to the one below it
     from_layer = important_direct_effect.sum((-1,-2)).argmax().item()
     to_layer = from_layer + 1
     
@@ -138,9 +143,7 @@ for model_name in model_names:
     else:
         print(f"We are ablating from {from_layer} to {to_layer}")
 
-
-    
-    moved_logits, moved_cache = run_forward_pass_and_copy_layer(from_act, to_act)
+    moved_cache = run_forward_pass_and_copy_layer(from_act, to_act)
     
     moved_per_head_direct_effect, moved_all_layer_direct_effect = collect_direct_effect(moved_cache, correct_tokens=clean_tokens,model = model,
                                                                             display=in_notebook_mode, cache_for_scaling=cache)

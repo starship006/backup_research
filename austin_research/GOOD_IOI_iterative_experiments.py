@@ -1,7 +1,9 @@
 """
 Goals with this research direction:
-- Flesh out the hypothesis that model's are iterative, and test to what extent this is true
+- In the IOI distribution, flesh out the hypothesis that adding the output of a head to the resid_pre of the same layer abaltes it
 - If this is indeed the case, find a way to tie it back to backup and self-repair
+
+This code is similar to GOOD_move_layer_compare_ablate, but is for a single model
 """
 # %%
 from imports import *
@@ -49,7 +51,6 @@ assert torch.all(torch.eq(answer_tokens, indexed_answers))
 
 # %%
 logits, cache = model.run_with_cache(clean_tokens)
-# %%
 # %% First, see which heads in the model are even useful for predicting these (across ALL positions_)
 per_head_direct_effect, all_layer_direct_effect = collect_direct_effect(cache, correct_tokens=clean_tokens,model = model,
                                                                         display=in_notebook_mode)
@@ -77,9 +78,7 @@ top_head: tuple = (top_heads[0][0], top_heads[0][1])
 second_head: tuple = (top_heads[1][0], top_heads[1][1])
 
 
-
-
-def run_forward_pass_and_copy_layer(resid_layer_to_add: int, vector: Float[Tensor, "batch d_model"], scaling = 1):
+def run_forward_pass_and_add_vector_to_layer(resid_layer_to_add: int, vector: Float[Tensor, "batch d_model"], scaling = 1):
     """
     does a forwawrd pass but adds scaled version of a vector to at resid_pre_{resid_layer_to_add} multiplied by some sort of scaling
     """
@@ -92,7 +91,6 @@ def run_forward_pass_and_copy_layer(resid_layer_to_add: int, vector: Float[Tenso
     model.reset_hooks()
     return new_logits, new_cache
 # %%
-
 def add_vector_resid_see_change(head: tuple, scaling = 1, layer = None, display_change = True):
     """
     given a head, adds the output vectors of the head on the positions predicting the name, and then outputs the difference in the direct effect of the heads and the mlp layers
@@ -108,7 +106,7 @@ def add_vector_resid_see_change(head: tuple, scaling = 1, layer = None, display_
     target_head_out: Float[Tensor, "batch d_model"] = head_out.gather(-2, expanded_pre_answer_indicies).squeeze()
 
 
-    ablated_logits, ablated_cache = run_forward_pass_and_copy_layer(layer, target_head_out, scaling = scaling)
+    _, ablated_cache = run_forward_pass_and_add_vector_to_layer(layer, target_head_out, scaling = scaling)
     ablated_important_direct_effect, ablated_important_direct_effect_mlp = get_name_direct_effects(*collect_direct_effect(ablated_cache, correct_tokens=clean_tokens,model = model,
                                                                         display=False, cache_for_scaling=cache), answer_token_idx)
 
@@ -123,10 +121,14 @@ def add_vector_resid_see_change(head: tuple, scaling = 1, layer = None, display_
     
         
     show_input(head_de, mlp_de, title = title)
+    return ablated_important_direct_effect, ablated_important_direct_effect_mlp
 
 target_head = top_head
-random_head = (np.random.randint(model.cfg.n_layers), np.random.randint(model.cfg.n_heads))
-add_vector_resid_see_change(random_head, 50, target_head[0], True)
-print(random_head, important_direct_effect.mean((-1))[random_head[0], random_head[1]])
-print(target_head)
+target_layer = target_head[0]
+random_head = top_head#(np.random.randint(model.cfg.n_layers), np.random.randint(model.cfg.n_heads))
+ablated_important_direct_effect, ablated_important_direct_effect_mlp = add_vector_resid_see_change(random_head, 10, target_layer, True)
+print("Random Head:" , random_head, "Direct effect: ",  important_direct_effect.mean((-1))[random_head[0], random_head[1]])
+print("Target head:", target_head)
+print("Change in target head layer: ", (ablated_important_direct_effect - important_direct_effect)[target_layer].sum(0).mean(0))
+print("Change in target head: ", (ablated_important_direct_effect - important_direct_effect)[target_head].mean(0))
 # %%
