@@ -288,7 +288,7 @@ def get_projection(from_vector: Float[Tensor, "batch d_model"], to_vector: Float
     assert from_vector.ndim == 2
     
     dot_product = einops.einsum(from_vector, to_vector, "batch d_model, batch d_model -> batch")
-    length_of_from_vector = einops.einsum(from_vector, from_vector, "batch d_model, batch d_model -> batch")
+    #length_of_from_vector = einops.einsum(from_vector, from_vector, "batch d_model, batch d_model -> batch")
     length_of_vector = einops.einsum(to_vector, to_vector, "batch d_model, batch d_model -> batch")
     
 
@@ -296,7 +296,16 @@ def get_projection(from_vector: Float[Tensor, "batch d_model"], to_vector: Float
     projections = to_vector * einops.repeat(projected_lengths, "batch -> batch d_model", d_model = to_vector.shape[-1])
     return projections
 
-
+def get_3d_projection(from_vector: Float[Tensor, "batch seq d_model"], to_vector: Float[Tensor, "batch seq d_model"]) -> Float[Tensor, "batch seq d_model"]:
+    assert from_vector.shape == to_vector.shape
+    assert from_vector.ndim == 3
+    
+    dot_product = einops.einsum(from_vector, to_vector, "batch seq d_model, batch seq d_model -> batch seq")
+    length_of_vector = einops.einsum(to_vector, to_vector, "batch seq d_model, batch seq d_model -> batch seq")
+    
+    projected_lengths = (dot_product) / (length_of_vector)
+    projections = to_vector * einops.repeat(projected_lengths, "batch seq -> batch seq d_model", d_model = to_vector.shape[-1])
+    return projections
 
 
 

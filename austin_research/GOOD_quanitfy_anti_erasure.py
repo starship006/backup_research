@@ -1,5 +1,7 @@
 """
 Goal: put a number behind the amount of self-repair thats explained purely by anti-erasure
+
+This is going to pivot to just looking at self-repair due to MLP layers, who appear to have a sort of erasing behavior
 """
 # %%
 from imports import *
@@ -50,9 +52,11 @@ per_head_direct_effect, all_layer_direct_effect = collect_direct_effect(cache, c
 if in_notebook_mode:
     show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)), title = "Direct Effect of Heads and MLP Layers")
 # %%
-def ablate_head_freeze_erasure(head: tuple, batch = 0, pos = 0, freeze_erasure = True):
+def ablate_head_freeze_erasure(head: tuple, batch = 0, pos = 0, freeze_erasure = True, declare_mlp_as_erasure: Union[list, None] = None):
     """
     for a specific batch and position, ablates a head and potentially freeze the erasure (in MLP or heads) too
+    
+    declare_last_mlp_as_erasure: if nonempty list, then the last MLP layer will be considered as 'erasure' and nothing else
     """
     
     model.reset_hooks()
@@ -60,36 +64,42 @@ def ablate_head_freeze_erasure(head: tuple, batch = 0, pos = 0, freeze_erasure =
     
     # add freeze erasure hooks
     if freeze_erasure:
-        # get all the model components which contributed negatively on forward pass
-        head_contribution: Float[Tensor, "layer head"] = per_head_direct_effect[..., batch, pos]
-        mlp_contribution: Float[Tensor, "layer"] = all_layer_direct_effect[..., batch, pos]
-        
-        negative_theshold = -0.05
-        negative_h_layer_index, negative_h_head_index = torch.where(head_contribution < negative_theshold)
-        head_to_freeze = [(int(h_layer.item()), int(h_head.item())) for h_layer, h_head in zip(negative_h_layer_index, negative_h_head_index)]
-        mlp_to_freeze = torch.where(mlp_contribution < negative_theshold)[0].tolist()
-        
-        
-        for freeze_head in head_to_freeze:
-            if freeze_head[0] > head[0]:
-                freeze_count += 1
-                frozen_output: Float[Tensor, "d_head"] = corrupted_cache[utils.get_act_name("z",  freeze_head[0])][batch, pos, freeze_head[1], :]
-                freeze_hook = partial(replace_output_of_specific_batch_pos_hook, new_output = frozen_output, head = freeze_head[1], batch = batch, pos = pos)
-                model.add_hook(utils.get_act_name("z", freeze_head[0]), freeze_hook)
-                #print(f"added hook for {freeze_head}, which has a direct effect of {head_contribution[freeze_head[0], freeze_head[1]]}")
-                
-        for freeze_mlp in mlp_to_freeze:
-            if freeze_mlp > head[0]:
+        if declare_mlp_as_erasure is not None:
+            for freeze_mlp in declare_mlp_as_erasure:
                 freeze_count += 1
                 frozen_output: Float[Tensor, "d_head"] = corrupted_cache[utils.get_act_name("post",  freeze_mlp)][batch, pos, :]
                 freeze_hook = partial(replace_output_of_specific_MLP_batch_pos_hook, new_output = frozen_output, batch = batch, pos = pos)
                 model.add_hook(utils.get_act_name("post",  freeze_mlp), freeze_hook)
+        else:
+            # get all the model components which contributed negatively on forward pass
+            head_contribution: Float[Tensor, "layer head"] = per_head_direct_effect[..., batch, pos]
+            mlp_contribution: Float[Tensor, "layer"] = all_layer_direct_effect[..., batch, pos]
+            
+            negative_theshold = -0.05
+            negative_h_layer_index, negative_h_head_index = torch.where(head_contribution < negative_theshold)
+            head_to_freeze = [(int(h_layer.item()), int(h_head.item())) for h_layer, h_head in zip(negative_h_layer_index, negative_h_head_index)]
+            mlp_to_freeze = torch.where(mlp_contribution < negative_theshold)[0].tolist()
+            
+            
+            for freeze_head in head_to_freeze:
+                if freeze_head[0] > head[0]:
+                    freeze_count += 1
+                    frozen_output: Float[Tensor, "d_head"] = corrupted_cache[utils.get_act_name("z",  freeze_head[0])][batch, pos, freeze_head[1], :]
+                    freeze_hook = partial(replace_output_of_specific_batch_pos_hook, new_output = frozen_output, head = freeze_head[1], batch = batch, pos = pos)
+                    model.add_hook(utils.get_act_name("z", freeze_head[0]), freeze_hook)
+                    #print(f"added hook for {freeze_head}, which has a direct effect of {head_contribution[freeze_head[0], freeze_head[1]]}")
+                    
+            for freeze_mlp in mlp_to_freeze:
+                if freeze_mlp > head[0]:
+                    freeze_count += 1
+                    frozen_output: Float[Tensor, "d_head"] = corrupted_cache[utils.get_act_name("post",  freeze_mlp)][batch, pos, :]
+                    freeze_hook = partial(replace_output_of_specific_MLP_batch_pos_hook, new_output = frozen_output, batch = batch, pos = pos)
+                    model.add_hook(utils.get_act_name("post",  freeze_mlp), freeze_hook)
                 #print("added hook")
                 
                 
         # print("Froze a total of ", freeze_count, "heads and MLP layers")
-    
-    
+
     # corrupt head output
     corrupted_output: Float[Tensor, "batch pos d_head"] = corrupted_cache[utils.get_act_name("z",  head[0])][...,  head[1], :]
     model.add_hook(utils.get_act_name("z", head[0]), partial(replace_output_hook, new_output = corrupted_output, head = head[1]))
@@ -106,7 +116,7 @@ def ablate_head_freeze_erasure(head: tuple, batch = 0, pos = 0, freeze_erasure =
 # %%
 
 
-head = (17, 4)
+head = (22, 11)
 TOP_INSTANCES_COUNT = 30
 top_indicies = topk_of_Nd_tensor(per_head_direct_effect[head[0],head[1]], TOP_INSTANCES_COUNT + 1)
 
@@ -158,6 +168,6 @@ fig.add_trace(go.Scatter(x=line_x, y=line_y, mode='lines', name='y=x'))
 # Set x-axis and y-axis labels
 fig.update_layout(
     xaxis_title="Normal Logit Difference",
-    yaxis_title="Logit Difference When Freezing Negative Heads"
+    yaxis_title="Logit Difference When Freezing Just MLP"
 )
 # %%
