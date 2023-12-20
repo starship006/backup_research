@@ -1,8 +1,5 @@
 """
-This code tries to qualify how much 'self repair' is due to:
-  - LN
-  - attn heads
-  - mlp layers
+This code does preliminary exploration of what components are responsile for self-repairing logits.
 """
 # %%
 import sys
