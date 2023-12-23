@@ -3,25 +3,28 @@ This code is responsible for making the 'thresholded self-repair' graphs.
 """
 # %%
 from imports import *
-
-# %%
-%load_ext autoreload
-%autoreload 2
 from path_patching import act_patch
-from GOOD_helpers import *
+from GOOD_helpers import is_notebook, shuffle_owt_tokens_by_batch, return_item, get_correct_logit_score, collect_direct_effect, show_input, create_layered_scatter
 # %% Constants
 in_notebook_mode = is_notebook()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+FOLDER_TO_WRITE_GRAPHS_TO = "figures/self_repair_graphs/"
+FOLDER_TO_STORE_PICKLES = "pickle_storage/"
+
+
 if in_notebook_mode:
-    model_name = "pythia-410m"
+    model_name = "gpt2-small"
+    BATCH_SIZE = 30
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
+    parser.add_argument('--batch_size', type=int, default=30)  
     args = parser.parse_args()
+    
     model_name = args.model_name
+    BATCH_SIZE = args.batch_size
 
-BATCH_SIZE = 150
-PROMPT_LEN = 30
+
 
 # %%
 safe_model_name = model_name.replace("/", "_")
@@ -33,42 +36,17 @@ model = HookedTransformer.from_pretrained(
     refactor_factored_attn_matrices = False,
     device = device,
 )
-model.set_use_attn_result(True)
-# %%
-owt_dataset = utils.get_dataset("owt")
-owt_dataset_name = "owt"
-# %%
-all_owt_tokens = model.to_tokens(owt_dataset[0:(BATCH_SIZE * 2)]["text"]).to(device)
-owt_tokens = all_owt_tokens[0:BATCH_SIZE][:, :PROMPT_LEN]
-corrupted_owt_tokens = all_owt_tokens[BATCH_SIZE:BATCH_SIZE * 2][:, :PROMPT_LEN]
-assert owt_tokens.shape == corrupted_owt_tokens.shape == (BATCH_SIZE, PROMPT_LEN)
-# %%
-logits, cache = model.run_with_cache(owt_tokens)
-corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_owt_tokens)
-# %%
-per_head_direct_effect, all_layer_direct_effect = collect_direct_effect(cache, correct_tokens=owt_tokens, model = model, display = in_notebook_mode, collect_individual_neurons = False)
-if in_notebook_mode:
-    show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)), title = "Direct Effect of Heads and MLP Layers")
-# %%
-def new_ld_upon_sample_ablation_calc_with_frozen_ln(heads = None, mlp_layers = None):
-    assert heads != None and len(heads) == 1 and mlp_layers == None
-    
-    model.reset_hooks()
-    corrupted_output: Float["batch pos d_head"] = corrupted_cache[utils.get_act_name("z",  heads[0][0])][...,  heads[0][1], :]
-    model.add_hook(utils.get_act_name("z", heads[0][0]), partial(replace_output_hook, new_output = corrupted_output, head = heads[0][1]))
-    model.add_hook('ln_final.hook_scale', partial(replace_model_component_completely, new_model_comp = cache['ln_final.hook_scale']))
-    ablated_logits = model(owt_tokens)
-    model.reset_hooks()
-    # get change in direct effect compared to original
-    avg_correct_logit_score = get_correct_logit_score(ablated_logits, owt_tokens)
-    return avg_correct_logit_score
-    
+model.set_use_attn_result(False)
 
-def new_ld_upon_sample_ablation_calc(heads = None, mlp_layers = None, num_runs = 2):
+# %%
+dataset = utils.get_dataset("pile")
+dataset_name = "The Pile"
+all_dataset_tokens = model.to_tokens(dataset["text"]).to(device)
+# %% Helper Functions
+def new_logits_upon_sample_ablation_calc(clean_tokens, corrupted_tokens, heads = None, mlp_layers = None, num_runs = 1):
     """
-    runs activation patching over component and returns new avg_correct_logit_score, averaged over num_runs runs
-    this is the average logit of the correct token upon num_runs sample ablations
-    logits just used for size
+    gets the logits of correct token when running the model on some tokens and sample ablating some heads or mlp layers
+    averaged over num_runs different sample ablations (by default, only just 1 run. this may need to be greater if working with smaller batch sizes)
     """
     
     nodes = []
@@ -77,21 +55,22 @@ def new_ld_upon_sample_ablation_calc(heads = None, mlp_layers = None, num_runs =
     if mlp_layers != None:
         nodes += [Node("mlp_out", layer) for layer in mlp_layers]
 
-    # use many shuffled!
+    
     logits_accumulator = torch.zeros_like(logits)
     for i in range(num_runs):
         # Shuffle owt_tokens by batch
-        shuffled_corrupted_owt_tokens = shuffle_owt_tokens_by_batch(corrupted_owt_tokens)
+        shuffled_corrupted_tokens = shuffle_owt_tokens_by_batch(corrupted_tokens)
         # Calculate new_logits using act_patch
-        new_logits = act_patch(model, owt_tokens, nodes, return_item, shuffled_corrupted_owt_tokens, apply_metric_to_cache=False)
+        new_logits = act_patch(model, clean_tokens, nodes, return_item, shuffled_corrupted_tokens, apply_metric_to_cache=False)
         logits_accumulator += new_logits
 
     avg_logits = logits_accumulator / num_runs
+    
     # get change in direct effect compared to original
-    avg_correct_logit_score = get_correct_logit_score(avg_logits, owt_tokens)
+    avg_correct_logit_score = get_correct_logit_score(avg_logits, clean_tokens)
     return avg_correct_logit_score
 
-def get_thresholded_change_in_logits(heads = None, mlp_layers = None, thresholds = [0.5], freez_ln = False):
+def get_thresholded_change_in_logits(clean_tokens, corrupted_tokens, per_component_direct_effect: Tensor, heads = None, mlp_layers = None, thresholds = [0.5]):
     """"
     this function calculates direct effect of component on clean and sample ablation,
     and then returns an averaged direct effect and compensatory response effect of the component
@@ -114,6 +93,7 @@ def get_thresholded_change_in_logits(heads = None, mlp_layers = None, thresholds
     elif mlp_layers is not None:
         # layer is max of all the layers
         layer = max(mlp_layers)
+        head = None
     else:
         raise Exception("No heads or mlp layers given")
     
@@ -123,43 +103,87 @@ def get_thresholded_change_in_logits(heads = None, mlp_layers = None, thresholds
     if mlp_layers != None:
         nodes += [Node("mlp_out", layer) for layer in mlp_layers]
 
-    if freez_ln:
-        change_in_logits = new_ld_upon_sample_ablation_calc_with_frozen_ln(heads, mlp_layers) - get_correct_logit_score(logits, owt_tokens)
-    else:
-        change_in_logits = new_ld_upon_sample_ablation_calc(heads, mlp_layers) - get_correct_logit_score(logits, owt_tokens)
+    
+    change_in_logits = new_logits_upon_sample_ablation_calc(clean_tokens, corrupted_tokens, heads, mlp_layers) - get_correct_logit_score(logits, clean_tokens)
         
-    # 3) filter for indices wherer per_head_direct_effect is greater than threshold
+    # 3) filter for indices wherer per_component_direct_effect is greater than threshold
     to_return = {}
     for threshold in thresholds:
-        mask_direct_effect: Float[Tensor, "batch pos"] = (per_head_direct_effect[layer, head].abs() > threshold) if heads != None else (all_layer_direct_effect[layer].abs() > threshold)
+        if heads != None:
+            mask_direct_effect: Float[Tensor, "batch pos"] = (per_component_direct_effect[layer, head].abs() > threshold)
+        else:
+            mask_direct_effect: Float[Tensor, "batch pos"] = (per_component_direct_effect[layer].abs() > threshold)
+        
         # Using masked_select to get the relevant values based on the mask.
         selected_cil = change_in_logits.masked_select(mask_direct_effect)
-        selected_de = per_head_direct_effect[layer, head].masked_select(mask_direct_effect) if heads != None else all_layer_direct_effect[layer].masked_select(mask_direct_effect)
         
-    
+        if heads != None:
+            selected_de = per_component_direct_effect[layer, head].masked_select(mask_direct_effect)
+        else:
+            selected_de = per_component_direct_effect[layer].masked_select(mask_direct_effect)
+        
+        
         to_return[f"de_{threshold}"] = selected_de.mean().item()
         to_return[f"cil_{threshold}"] = selected_cil.mean().item()
         to_return[f"num_thresholded_{threshold}"] = selected_cil.shape[0]
-        
     return to_return
 
 
 
-# %%
-thresholds = [0.1 * i for i in range(0,12)]
-thresholded_de = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
-thresholded_cil = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
-thresholded_count = torch.zeros((len(thresholds), model.cfg.n_layers, model.cfg.n_heads))
+# %% We need to iterate through the dataset
+TOTAL_PROMPTS_TO_ITERATE_THROUGH = 3000
 
+# BATCH_SIZE defined earlier
+PROMPT_LEN = 400
 
-for layer in tqdm(range(model.cfg.n_layers)):
-    for head in range(model.cfg.n_heads):
-        dict_results = get_thresholded_change_in_logits(heads = [(layer, head)], thresholds = thresholds, freez_ln = False)
-        for i, threshold in enumerate(thresholds):
-            thresholded_de[i, layer, head] = dict_results[f"de_{threshold}"]
-            thresholded_cil[i, layer, head] = dict_results[f"cil_{threshold}"]
-            thresholded_count[i, layer, head] = dict_results[f"num_thresholded_{threshold}"]
-# %%
+num_batches = TOTAL_PROMPTS_TO_ITERATE_THROUGH // BATCH_SIZE
+
+# %% We filter out for specific instances where the direct effects are above a certain amount. By default, the figures in the paper don't worry about thresholds, but they are nice to have
+THRESHOLDS = [0.0] #[0.1 * i for i in range(0,12)]
+thresholded_de = torch.zeros((num_batches, len(THRESHOLDS), model.cfg.n_layers, model.cfg.n_heads))
+thresholded_cil = torch.zeros((num_batches, len(THRESHOLDS), model.cfg.n_layers, model.cfg.n_heads))
+thresholded_count = torch.zeros((num_batches, len(THRESHOLDS), model.cfg.n_layers, model.cfg.n_heads))
+
+# %% Run. This takes a while.
+for batch in tqdm(range(num_batches)):
+    # Get a batch of clean and corrupted tokens
+    clean_batch_offset = batch * BATCH_SIZE
+    start_clean_prompt = clean_batch_offset
+    end_clean_prompt = clean_batch_offset + BATCH_SIZE
+    
+    corrupted_batch_offset = (batch + 1) * BATCH_SIZE
+    start_corrupted_prompt = corrupted_batch_offset
+    end_corrupted_prompt = corrupted_batch_offset + BATCH_SIZE
+
+    clean_tokens = all_dataset_tokens[start_clean_prompt:end_clean_prompt, :PROMPT_LEN]
+    corrupted_tokens = all_dataset_tokens[start_corrupted_prompt:end_corrupted_prompt, :PROMPT_LEN]
+    assert clean_tokens.shape == corrupted_tokens.shape == (BATCH_SIZE, PROMPT_LEN)
+    
+    
+    # Cache clean/corrupted model activations + direct effects
+    logits, cache = model.run_with_cache(clean_tokens)
+    corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens)
+    
+
+    per_head_direct_effect, all_layer_direct_effect = collect_direct_effect(cache, correct_tokens=clean_tokens, model = model, display = False, collect_individual_neurons = False)
+    
+    #if in_notebook_mode:
+    #    show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)), title = "Direct Effect of Heads and MLP Layers")
+
+    for layer in range(model.cfg.n_layers):
+        for head in range(model.cfg.n_heads):
+            dict_results = get_thresholded_change_in_logits(clean_tokens, corrupted_tokens, per_head_direct_effect, heads = [(layer, head)], thresholds = THRESHOLDS)
+            for i, threshold in enumerate(THRESHOLDS):
+                thresholded_de[batch, i, layer, head] = dict_results[f"de_{threshold}"]
+                thresholded_cil[batch, i, layer, head] = dict_results[f"cil_{threshold}"]
+                thresholded_count[batch, i, layer, head] = dict_results[f"num_thresholded_{threshold}"]
+
+# %% Average across batches
+thresholded_de = thresholded_de.mean(0)
+thresholded_cil = thresholded_cil.mean(0)
+thresholded_count = thresholded_count.mean(0)
+
+# %% Plotting functionality
 
 def gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cre, thresholds, use_logits = False, layout_horizontal = True):
     """
@@ -183,7 +207,7 @@ def gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cre, threshol
     head_marker_colors = [layer_colors[layer] for layer in range(num_layers) for _ in range(num_heads)]
 
 
-    print(head_marker_colors)
+    #print(head_marker_colors)
     for i, threshold in enumerate(thresholds):
         visible = (i == 0)  # Only the first threshold is visible initially
 
@@ -343,15 +367,30 @@ def gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cre, threshol
     
     folder = ""
     if layout_horizontal:
-        folder = "GOOD_clean_figures/horizontal_plot_graphs/"
+        folder = FOLDER_TO_WRITE_GRAPHS_TO + "horizontal_plot_graphs/"
     else:
-        folder = "GOOD_clean_figures/scatter_plot_self_repair_graphs/"
+        folder = FOLDER_TO_WRITE_GRAPHS_TO + "scatter_plot_self_repair_graphs/"
     
     fig.write_html(folder + f"threshold_{safe_model_name}_cre_vs_avg_direct_effect_slider.html")
 
     
 # %%
-gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cil, thresholds, True, layout_horizontal=False)
+#gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cil, THRESHOLDS, True, layout_horizontal=False)
+#gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cil, THRESHOLDS, True, layout_horizontal=True)
 # %%
-create_layered_scatter(thresholded_de[0], thresholded_cil[0], model, "dr", "cre", "de vs cre",)
-# %%
+fig = create_layered_scatter(thresholded_de[0], thresholded_cil[0], model, "Direct Effect of Component", "Change in Logits Upon Ablation", f"Effect of Sample-Ablating Attention Heads in {model_name}",)
+fig.write_html(FOLDER_TO_WRITE_GRAPHS_TO + f"simple_plot_graphs/{safe_model_name}_de_vs_cre.html")
+
+# %% Store the tensors as pickles
+
+# Assuming thresholded_de, thresholded_cil, thresholded_count, model_name are all defined above
+thresholds_str = "_".join(map(str, THRESHOLDS))  # Converts thresholds list to a string
+# Serialize and save thresholded_de
+with open(FOLDER_TO_STORE_PICKLES + f"{safe_model_name}_thresholded_de_{thresholds_str}.pkl", "wb") as f:
+    pickle.dump(thresholded_de, f)
+# Serialize and save thresholded_ci
+with open(FOLDER_TO_STORE_PICKLES + f"{safe_model_name}_thresholded_cil_{thresholds_str}.pkl", "wb") as f:
+    pickle.dump(thresholded_cil, f)
+# Serialize and save thresholded_count
+with open(FOLDER_TO_STORE_PICKLES + f"{safe_model_name}_thresholded_count_{thresholds_str}.pkl", "wb") as f:
+    pickle.dump(thresholded_count, f)
