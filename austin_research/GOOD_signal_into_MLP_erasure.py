@@ -122,7 +122,7 @@ def make_scatter(name_data_tuple, x_data, x_label = "Direct Effect of Head",
         data = data + [trace3]
     
     if title is None:
-        title = f'Effects of Ablating Head {head_to_ablate} | ln frozen for DE = {FREEZE_FINAL_LN}'
+        title = f'Effects of Ablating Head {head_to_ablate}'
 
     
     layout = go.Layout(
@@ -175,8 +175,10 @@ new_logits = act_patch(model, owt_tokens, [Node("z", i, j) for (i,j) in [head_to
 
 # %%  Get self-repair from projection away correct token
 token_dirs = model.tokens_to_residual_directions(owt_tokens[:, 1:])
+KEEP_TOKEN_DIRECTION = True
+
 model.reset_hooks()
-partial_hook = partial(project_away_directions_of_almost_all_positions, heads = [head_to_ablate[1]], project_away_vector = token_dirs, project_only = True)
+partial_hook = partial(project_away_directions_of_almost_all_positions, heads = [head_to_ablate[1]], project_away_vector = token_dirs, project_only = KEEP_TOKEN_DIRECTION)
 model.add_hook(utils.get_act_name("result", head_to_ablate[0]), partial_hook)
 projected_logits, projected_cache = model.run_with_cache(owt_tokens)
 model.reset_hooks()
@@ -200,7 +202,7 @@ projected_all_mlp_diff: Float[Tensor, "layer batch pos"] = (projected_all_layer_
 
 
 ablated_correct_logit = get_correct_logit_score(new_logits, owt_tokens)
-projected_correct_logit = get_correct_logit_score(projected_logits, owt_tokens)
+projected_correct_logit = get_correct_logit_score(projected_logits, owt_tokens) #type:ignore
 
 ablated_diff_in_logits = (ablated_correct_logit - correct_logit)
 projected_diff_in_logits = (projected_correct_logit - correct_logit)
@@ -214,7 +216,7 @@ x_data = per_head_direct_effect[head_to_ablate].flatten().cpu()
 
 make_scatter([(ablated_diff_in_logits.flatten().cpu(), "Change in Correct Logit Score - Ablation"),
              (projected_diff_in_logits.flatten().cpu(), "Change in Correct Logit Score - Projection"),],
-             x_data)
+             x_data, title = f"Change in Logits when Ablating vs Projecting Head {head_to_ablate} | Keep Tokens == {KEEP_TOKEN_DIRECTION}")
 
 
 # %% Look at self-repair in MLP layers
