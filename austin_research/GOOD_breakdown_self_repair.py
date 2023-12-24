@@ -16,7 +16,7 @@ from GOOD_helpers import *
 in_notebook_mode = is_notebook()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if in_notebook_mode:
-    model_name = "pythia-410m"
+    model_name = "pythia-160m"
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
@@ -116,7 +116,11 @@ def ablate_top_instances(head: tuple, top_instances_count = 40):
 n_layers = model.cfg.n_layers
 fig = make_subplots(rows=n_layers, cols=1, subplot_titles=[f'Layer {l}' for l in range(n_layers)])
 
-for layer in tqdm(range(n_layers)):
+percentile_to_ablate = 0.06
+top_instances_to_use = int(percentile_to_ablate * BATCH_SIZE * PROMPT_LEN)
+
+
+for layer in tqdm(range(9, n_layers)):
     avg_heads = []
     avg_layers = []
     avg_LN = []
@@ -126,7 +130,7 @@ for layer in tqdm(range(n_layers)):
     
 
     for head in range(model.cfg.n_heads):
-        logit_diffs, direct_effects, ablated_direct_effects, self_repair_from_heads, self_repair_from_layers, self_repair_from_LN = ablate_top_instances((layer, head))
+        logit_diffs, direct_effects, ablated_direct_effects, self_repair_from_heads, self_repair_from_layers, self_repair_from_LN = ablate_top_instances((layer, head), top_instances_to_use)
         
         avg_heads.append(self_repair_from_heads.mean())
         avg_layers.append(self_repair_from_layers.mean())
@@ -158,6 +162,6 @@ if in_notebook_mode:
 # %%
 
 # save fig to html
-fig.write_html(f"self_repair_breakdown_{safe_model_name}.html")
+#fig.write_html(f"self_repair_breakdown_{safe_model_name}.html")
 
 # %%

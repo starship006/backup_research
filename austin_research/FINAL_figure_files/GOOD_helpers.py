@@ -148,7 +148,7 @@ def get_correct_logit_score(
     clean_tokens: Float[Tensor, "batch seq"],
 ):
     '''
-    Returns logit difference between the correct and incorrect answer.
+    Returns the logit of the next token
 
     If per_prompt=True, return the array of differences rather than the average.
     TESTED

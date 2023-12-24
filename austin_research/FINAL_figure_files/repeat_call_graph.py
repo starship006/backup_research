@@ -3,16 +3,16 @@
 import subprocess
 
 model_names = [
-    "gpt2-small",
-    "gpt2-medium",
-    "gpt2-large",
-    "opt-125m",
-    "opt-410m",
     "pythia-160m",
+    "gpt2-small",
+    #"gpt2-medium",
+    #"gpt2-large",
+    #"opt-125m",
+    #"opt-410m",
     #"gpt-neo-125M",
     #stanford-gpt2-small-a",
     #"stanford-gpt2-medium-a",
-    # "pythia-410m",
+    "pythia-410m",
     # "pythia-410m-deduped",
     # #"opt-1.3b",
     # "pythia-1b",
@@ -30,7 +30,7 @@ for model_name in model_names:
     while batch_size > 0:  # Continue trying until batch_size is positive
         try:
             # Attempt to run the script with the current batch size
-            subprocess.run(["python", "GOOD_self_repair_graph_generator.py", 
+            subprocess.run(["python", "GOOD_breakdown_self_repair.py", 
                             "--model_name=" + model_name, 
                             "--batch_size=" + str(batch_size)], 
                             check=True)  # check=True makes it raise an error if the command fails
