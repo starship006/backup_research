@@ -44,8 +44,8 @@ model = HookedTransformer.from_pretrained(
 )
 model.set_use_attn_result(True)
 # %%
-batch_size = 40 # 30 -- if model large
-prompt_len = 30 # 15 -- if model large
+batch_size = 50 # 20 -- if model large    -- 40 else
+prompt_len = 40 # 30 -- if model large    -- 30 else
 
 owt_dataset = utils.get_dataset("owt")
 owt_dataset_name = "owt"    
@@ -62,11 +62,10 @@ logits, cache = model.run_with_cache(clean_tokens)
 # %% First, see which heads in the model are even useful for predicting these (across ALL positions_)
 per_head_direct_effect, all_layer_direct_effect = collect_direct_effect(cache, correct_tokens=clean_tokens,model = model,
                                                                         display=in_notebook_mode)
-
 if in_notebook_mode:
     show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)), title = "Direct Effect of Heads and MLP Layers")
 
-correct_logit = get_correct_logit_score(logits, owt_tokens)
+correct_logits: Float[Tensor, "batch pos_minus_one"] = get_correct_logit_score(logits, owt_tokens)
 
 # %%
 head_to_ablate = (22,11)
@@ -88,7 +87,7 @@ all_head_diff: Float[Tensor, "layer head batch pos"] = (ablated_per_head_direct_
 all_mlp_diff: Float[Tensor, "layer batch pos"] = (ablated_all_layer_direct_effect - all_layer_direct_effect)
 
 # %%
-diff_in_logits = (ablated_correct_logit - correct_logit)
+diff_in_logits = (ablated_correct_logit - correct_logits)
 
 #histogram((diff_in_logits).flatten(), title = "Change in Correct Logit Score")
 scatter(per_head_direct_effect[head_to_ablate].flatten(), diff_in_logits.flatten(), title = "DE of head vs Change in Correct Logit Score")
@@ -141,7 +140,7 @@ else:
     moved_per_head_direct_effect, moved_all_layer_direct_effect = collect_direct_effect(moved_cache, correct_tokens=clean_tokens,model = model,
                                                                         display=in_notebook_mode)
 # %%
-if False:
+if True:
     head_diff: Float[Tensor, "layer head batch pos_minus_one"] = moved_per_head_direct_effect - per_head_direct_effect
     layer_diff = moved_all_layer_direct_effect - all_layer_direct_effect
 else:
@@ -165,79 +164,66 @@ print("Mean DE diff in heads", DE_diff_in_heads.mean((-1, -2)))
 #histogram(head_diff[layer_to_replace, 8].flatten())
 histogram(head_diff[layer_to_replace].sum(0).flatten())
 # %%
-scatter(per_head_direct_effect[head_to_ablate].flatten(), head_diff[layer_to_replace].sum(0).flatten(), title = f"instances of self-repair but when copying old resid")
+scatter(per_head_direct_effect[head_to_ablate].flatten(), head_diff[layer_to_replace].sum(0).flatten(), title = f"instances of self-repair but when simulating resid layer here")
 # %%
 
 for i in range(model.cfg.n_heads):
     scatter(per_head_direct_effect[head_to_ablate].flatten(), head_diff[layer_to_replace, i].flatten(), title = f"Head {i} Direct Effect vs Change in Direct Effect when copying old resid")
 
+
+# %% Second Approach: Instead of looking at the change in logits, look at cossim with the original head
+def get_cossims_from_cache(clean_direction, cache):
+    assert clean_direction.shape == cache[utils.get_act_name("result", 0)][..., 0, :].shape
+    cossims = torch.zeros((model.cfg.n_layers, model.cfg.n_heads, batch_size, prompt_len))
+    for layer in range(model.cfg.n_layers):
+        for head in range(model.cfg.n_heads):
+            cossims[layer, head] = F.cosine_similarity(clean_direction, cache[utils.get_act_name("result", layer)][..., head, :], dim = -1)
+        
+    return cossims
+# %% Finding heads which seem to have large cossim with other heads around it (indication of model iterativity?)
+
+max_cossim_with_other_head = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
+
+for layer in range(model.cfg.n_layers):
+    for head in range(model.cfg.n_heads):
+        clean_direction: Float[Tensor, "batch pos d_model"] = cache[utils.get_act_name("result", layer)][..., head, :]
+        clean_cossims = get_cossims_from_cache(clean_direction, cache).mean((-1, -2))
+        clean_cossims[layer, head] = 0
+        max_cossim_with_other_head[layer, head] = clean_cossims.abs().max()
+
+        
 # %%
-move_layer_diff = moved_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1))
-print(move_layer_diff.sum(-1))
-print(move_layer_diff.sum(-1)[to_layer])
-
-
-important_layer_change_from_move_layer = move_layer_diff[to_layer]
-
-
-
-    
-
-
-
-
-top_head = topk_of_Nd_tensor(important_direct_effect.mean((-1)), 1)[0]
-
-if (top_head[0] != from_layer):
-    continue
-
-
-nodes = [Node("z", top_head[0], top_head[1])]
-new_cache = act_patch(model, clean_tokens, nodes, return_item, corrupted_owt_tokens, apply_metric_to_cache=True)
-ablated_per_head_direct_effect, ablated_all_layer_direct_effect = collect_direct_effect(new_cache, correct_tokens=clean_tokens, model = model,
-                                                                                        title = "ablated DE", display=in_notebook_mode, cache_for_scaling=cache)
-ablated_important_direct_effect, ablated_important_direct_effect_mlp = get_name_direct_effects(ablated_per_head_direct_effect, ablated_all_layer_direct_effect, answer_token_idx)
-
-if in_notebook_mode:
-    show_input(ablated_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1)),
-                ablated_important_direct_effect_mlp.mean((-1)) - important_direct_effect_mlp.mean((-1)), title = f"Change in DE when ablating head")
-
-ablation_diff = ablated_important_direct_effect.mean((-1)) - important_direct_effect.mean((-1))
-print(ablation_diff.sum(-1))
-print(ablation_diff.sum(-1)[to_layer])
-
-
-change_from_ablation = ablation_diff[to_layer]
-
-
-all_layer_changes.append(important_layer_change_from_move_layer.cpu())
-all_ablation_changes.append(change_from_ablation.cpu())
-used_models.append(model_name)
-    
-
-
-
+imshow(max_cossim_with_other_head, title = "Max Cosine Similarity of Heads with Other Heads")
 
 # %%
-plot = go.Figure()
-for model_name, layer_changes, ablation_changes in zip(used_models, all_layer_changes, all_ablation_changes):
-# Create a scatter trace for each model
-trace = go.Scatter(
-    x=layer_changes,
-    y=ablation_changes,
-    mode='markers',
-    name=model_name
-)
-plot.add_trace(trace)
+random_head = (8, 13)
+clean_direction: Float[Tensor, "batch pos d_model"] = cache[utils.get_act_name("result", random_head[0])][..., random_head[1], :]
+clean_cossims = get_cossims_from_cache(clean_direction, cache)
 
-# Customize layout if needed
-plot.update_layout(
-title='Scatter Plot of Change in DE when copying layer vs ablating top head',
-xaxis_title='Layer Changes',
-yaxis_title='Ablation Changes',
-showlegend=True  # Set to False if you don't want a legend
-)
+# %%
+imshow(clean_cossims.mean((-1, -2)), title = "Average Cosine Similarity of Heads with Original Head")
 
-# Show the plot
-plot.show()
+# %%
+nodes = [Node("z", i, j) for (i,j) in [random_head]]
+ablated_cache = act_patch(model, clean_tokens, nodes, return_item, corrupted_owt_tokens, apply_metric_to_cache=True)
+ablated_logits = act_patch(model, clean_tokens, nodes, return_item, corrupted_owt_tokens, apply_metric_to_cache=False)
+ablated_correct_logits = get_correct_logit_score(ablated_logits, clean_tokens)
+# %%
+new_cossims = get_cossims_from_cache(clean_direction, ablated_cache)
+
+# %%
+diff = new_cossims - clean_cossims
+diff[random_head[0], random_head[1]] = 0 # just for visual purposes
+imshow(diff.mean((-1, -2)), title = "Change in Average Cosine Similarity of Heads with Original Head")
+# %%
+top_instances = topk_of_Nd_tensor(correct_logits - ablated_correct_logits, 10)
+# %%
+instance = 5
+batch = top_instances[instance][0]
+pos = top_instances[instance][1]
+print("Change in logits", correct_logits[batch, pos] - ablated_correct_logits[batch, pos])
+imshow(clean_cossims[..., batch, pos], title = f"Average Cosine Similarity of Heads with Original Head on B{batch}P{pos}")
+imshow(diff[..., batch, pos], title = f"Change in Average Cosine Similarity of Heads with Original Head on B{batch}P{pos}")
+# %%
+imshow(per_head_direct_effect[..., batch, pos], title = f"Direct Effect of Heads on B{batch}P{pos}")
 # %%
