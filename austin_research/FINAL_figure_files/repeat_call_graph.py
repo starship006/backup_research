@@ -30,9 +30,10 @@ for model_name in model_names:
     while batch_size > 0:  # Continue trying until batch_size is positive
         try:
             # Attempt to run the script with the current batch size
-            subprocess.run(["python", "GOOD_breakdown_self_repair.py", 
+            subprocess.run(["python", "GOOD_self_repair_graph_generator.py", 
                             "--model_name=" + model_name, 
-                            "--batch_size=" + str(batch_size)], 
+                            "--batch_size=" + str(batch_size),
+                            "--zero_ablation=" + str(True)], 
                             check=True)  # check=True makes it raise an error if the command fails
             break  # If successful, proceed to next model
 
