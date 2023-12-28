@@ -28,7 +28,8 @@ def residual_stack_to_direct_effect(
 
 
 def collect_direct_effect(de_cache: ActivationCache = None, correct_tokens: Float[Tensor, "batch seq_len"] = None, model: HookedTransformer = None, 
-                           title = "Direct Effect of Heads", display = True, collect_individual_neurons = False, cache_for_scaling: ActivationCache = None) -> Tuple[Float[Tensor, "n_layer n_head batch pos_minus_one"], Float[Tensor, "n_layer batch pos_minus_one"]]:#, Float[Tensor, "n_layer d_mlp batch pos_minus_one"]]:
+                           title = "Direct Effect of Heads", display = True, collect_individual_neurons = False, cache_for_scaling: ActivationCache = None) -> Union[Tuple[Float[Tensor, "n_layer n_head batch pos_minus_one"], Float[Tensor, "n_layer batch pos_minus_one"]],
+                                                                                                                                                                     Tuple[Float[Tensor, "n_layer n_head batch pos_minus_one"], Float[Tensor, "n_layer batch pos_minus_one"], Float[Tensor, "n_layer d_mlp batch pos_minus_one"]]]:
     """
     Given a cache of activations, and a set of correct tokens, returns the direct effect of each head and neuron on each token.
     
@@ -67,8 +68,8 @@ def collect_direct_effect(de_cache: ActivationCache = None, correct_tokens: Floa
     # iterate over every neuron to avoid memory issues
     if collect_individual_neurons:
         for neuron in tqdm(range(model.cfg.d_mlp)):
-            single_neuron_output: Float[Tensor, "n_layer batch pos d_model"] = de_cache.stack_neuron_results(layer = -1, neuron_slice = (neuron, neuron + 1), return_labels = False, apply_ln = False)
-            direct_effect_mlp[:, neuron, :, :] = residual_stack_to_direct_effect(single_neuron_output, token_residual_directions, scaling_cache = cache_for_scaling)
+            neuron_in_each_layer_output: Float[Tensor, "n_layer batch pos d_model"] = de_cache.stack_neuron_results(layer = -1, neuron_slice = (neuron, neuron + 1), return_labels = False, apply_ln = False)
+            direct_effect_mlp[:, neuron, :, :] = residual_stack_to_direct_effect(neuron_in_each_layer_output, token_residual_directions, scaling_cache = cache_for_scaling)
     # get per mlp layer effect
     all_layer_output: Float[Tensor, "n_layer batch pos d_model"] = torch.zeros((model.cfg.n_layers, correct_tokens.shape[0], correct_tokens.shape[1], model.cfg.d_model)).to(device)
     for layer in range(model.cfg.n_layers):
