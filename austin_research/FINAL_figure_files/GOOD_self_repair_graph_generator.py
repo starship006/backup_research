@@ -4,7 +4,7 @@ This code is responsible for making the self-repair graphs.
 # %%
 from imports import *
 from path_patching import act_patch
-from GOOD_helpers import is_notebook, shuffle_owt_tokens_by_batch, return_item, get_correct_logit_score, collect_direct_effect, show_input, create_layered_scatter
+from GOOD_helpers import is_notebook, shuffle_owt_tokens_by_batch, return_item, get_correct_logit_score, collect_direct_effect, show_input, create_layered_scatter, replace_output_hook
 # %% Constants
 in_notebook_mode = is_notebook()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -15,19 +15,20 @@ FOLDER_TO_STORE_PICKLES = "pickle_storage/"
 if in_notebook_mode:
     model_name = "pythia-160m"
     BATCH_SIZE = 30
-    ZERO_ABLATION = True
+    ABLATION_TYPE = "mean" 
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
-    parser.add_argument('--batch_size', type=int, default=30)  
-    parser.add_argument('--zero_ablation', type=bool, default=False)
+    parser.add_argument('--batch_size', type=int, default=30)
+    parser.add_argument('--ablation_type', type=str, default='mean', choices=['mean', 'zero', 'sample'])
     args = parser.parse_args()
     
     model_name = args.model_name
     BATCH_SIZE = args.batch_size
-    ZERO_ABLATION = args.zero_ablation
+    ABLATION_TYPE = args.ablation_type
 
-
+# Ensure that ABLATION_TYPE is one of the expected values
+assert ABLATION_TYPE in ["mean", "zero", "sample"], "Ablation type must be 'mean', 'zero', or 'sample'."
 
 # %%
 safe_model_name = model_name.replace("/", "_")
@@ -46,10 +47,12 @@ dataset = utils.get_dataset("pile")
 dataset_name = "The Pile"
 all_dataset_tokens = model.to_tokens(dataset["text"]).to(device)
 # %% Helper Functions
-def new_logits_upon_ablation_calc(clean_tokens, corrupted_tokens, heads = None, mlp_layers = None, num_runs = 1):
+def new_logits_upon_ablation_calc(clean_tokens, corrupted_tokens, heads = None, mlp_layers = None, num_runs = 1, clean_cache: ActivationCache = None):
     """
     gets the logits of correct token when running the model on some tokens and ablating some heads or mlp layers
     averaged over num_runs different ablations (by default, only just 1 run. this may need to be greater if working with smaller batch sizes)
+    
+    clean_cache for mean ablation
     """
     
     nodes = []
@@ -57,16 +60,32 @@ def new_logits_upon_ablation_calc(clean_tokens, corrupted_tokens, heads = None, 
         nodes += [Node("z", layer, head) for (layer,head) in heads]
     if mlp_layers != None:
         nodes += [Node("mlp_out", layer) for layer in mlp_layers]
-    if ZERO_ABLATION:
-        num_runs = 1 # since zero ablation would be deterministic
+    if ABLATION_TYPE == "zero" or ABLATION_TYPE == "mean":
+        num_runs = 1 # since zero or mean ablation would be deterministic
     
     logits_accumulator = torch.zeros_like(logits)
     for i in range(num_runs):
         # Shuffle owt_tokens by batch
         shuffled_corrupted_tokens = shuffle_owt_tokens_by_batch(corrupted_tokens)
         # Calculate new_logits using act_patch
-        if ZERO_ABLATION:
+        if ABLATION_TYPE == "zero":
             new_logits = act_patch(model, clean_tokens, nodes, return_item, new_cache = "zero", apply_metric_to_cache=False)
+        elif ABLATION_TYPE == "mean":
+            assert clean_cache is not None, "clean_cache must be provided for mean ablation"
+            assert len(nodes) == 1 and mlp_layers == None and heads != None, "mean ablation currently only works for one head"
+            
+            # get average output of layer
+            avg_output_of_layer = clean_cache[utils.get_act_name("z", heads[0][0])][:, :, heads[0][1], :].mean((0,1))
+            #W_U = model.W_O[heads[0][0], heads[0][1]]
+            #avg_output_of_layer = einops.einsum(avg_output_of_layer, W_U, "d_head, d_head d_model -> d_model")
+            avg_output_of_layer = einops.repeat(avg_output_of_layer, "d_model -> batch seq d_model", batch = clean_tokens.shape[0], seq = clean_tokens.shape[1])
+            
+            # run with hook which mean ablates
+            model.reset_hooks()
+            hook = partial(replace_output_hook, new_output = avg_output_of_layer, head = heads[0][1])
+            model.add_hook(utils.get_act_name("z", heads[0][0]), hook)
+            new_logits = model(clean_tokens)
+            model.reset_hooks()
         else:
             new_logits = act_patch(model, clean_tokens, nodes, return_item, shuffled_corrupted_tokens, apply_metric_to_cache=False)
         logits_accumulator += new_logits
@@ -77,7 +96,7 @@ def new_logits_upon_ablation_calc(clean_tokens, corrupted_tokens, heads = None, 
     avg_correct_logit_score = get_correct_logit_score(avg_logits, clean_tokens)
     return avg_correct_logit_score
 
-def get_thresholded_change_in_logits(clean_tokens, corrupted_tokens, per_component_direct_effect: Tensor, heads = None, mlp_layers = None, thresholds = [0.5]):
+def get_thresholded_change_in_logits(clean_tokens, corrupted_tokens, per_component_direct_effect: Tensor, heads = None, mlp_layers = None, thresholds = [0.5], cache: ActivationCache = None):
     """"
     this function calculates direct effect of component on clean runs and ablations,
     and then returns an averaged direct effect and compensatory response effect of the component
@@ -111,7 +130,7 @@ def get_thresholded_change_in_logits(clean_tokens, corrupted_tokens, per_compone
         nodes += [Node("mlp_out", layer) for layer in mlp_layers]
 
     
-    change_in_logits = new_logits_upon_ablation_calc(clean_tokens, corrupted_tokens, heads, mlp_layers) - get_correct_logit_score(logits, clean_tokens)
+    change_in_logits = new_logits_upon_ablation_calc(clean_tokens, corrupted_tokens, heads, mlp_layers, clean_cache=cache) - get_correct_logit_score(logits, clean_tokens)
         
     # 3) filter for indices wherer per_component_direct_effect is greater than threshold
     to_return = {}
@@ -176,10 +195,10 @@ for batch in tqdm(range(num_batches)):
     
     #if in_notebook_mode:
     #    show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)), title = "Direct Effect of Heads and MLP Layers")
-
+    
     for layer in range(model.cfg.n_layers):
         for head in range(model.cfg.n_heads):
-            dict_results = get_thresholded_change_in_logits(clean_tokens, corrupted_tokens, per_head_direct_effect, heads = [(layer, head)], thresholds = THRESHOLDS)
+            dict_results = get_thresholded_change_in_logits(clean_tokens, corrupted_tokens, per_head_direct_effect, heads = [(layer, head)], thresholds = THRESHOLDS, cache = cache)
             for i, threshold in enumerate(THRESHOLDS):
                 thresholded_de[batch, i, layer, head] = dict_results[f"de_{threshold}"]
                 thresholded_cil[batch, i, layer, head] = dict_results[f"cil_{threshold}"]
@@ -383,26 +402,28 @@ def gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cre, threshol
 #gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cil, THRESHOLDS, True, layout_horizontal=False)
 #gpt_new_plot_thresholded_de_vs_cre(thresholded_de, thresholded_cil, THRESHOLDS, True, layout_horizontal=True)
 # %%
-ablation_type = "Zero" if ZERO_ABLATION else "Sample"
+# cappitalize first char
+ablation_str = ABLATION_TYPE.capitalize()
 
-fig = create_layered_scatter(thresholded_de[0], thresholded_cil[0], model, "Direct Effect of Component", "Change in Logits Upon Ablation", f"Effect of {ablation_type}-Ablating Attention Heads in {model_name}")
+fig = create_layered_scatter(thresholded_de[0], thresholded_cil[0], model, "Direct Effect of Component", "Change in Logits Upon Ablation", f"Effect of {ablation_str}-Ablating Attention Heads in {model_name}")
 # %%
 
 #type(create_layered_scatter(thresholded_de[0], thresholded_cil[0], model, "Direct Effect of Component", "Change in Logits Upon Ablation", f"Effect of {ablation_type}-Ablating Attention Heads in {model_name}"))
 # %%
-fig.write_html(FOLDER_TO_WRITE_GRAPHS_TO + f"simple_plot_graphs/{ablation_type}_{safe_model_name}_de_vs_cre.html")
+fig.write_html(FOLDER_TO_WRITE_GRAPHS_TO + f"simple_plot_graphs/{ablation_str}_{safe_model_name}_de_vs_cre.html")
 
 # %% Store the tensors as pickles
-zero_modifier = "ZERO_" if ZERO_ABLATION else ""
+type_modifier = "ZERO_" if ABLATION_TYPE == "zero" else ("MEAN_" if ABLATION_TYPE == "mean" else "")
+                
 # Assuming thresholded_de, thresholded_cil, thresholded_count, model_name are all defined above
 thresholds_str = "_".join(map(str, THRESHOLDS))  # Converts thresholds list to a string
 # Serialize and save thresholded_de
-with open(FOLDER_TO_STORE_PICKLES + zero_modifier + f"{safe_model_name}_thresholded_de_{thresholds_str}.pkl", "wb") as f:
+with open(FOLDER_TO_STORE_PICKLES + type_modifier + f"{safe_model_name}_thresholded_de_{thresholds_str}.pkl", "wb") as f:
     pickle.dump(thresholded_de, f)
 # Serialize and save thresholded_ci
-with open(FOLDER_TO_STORE_PICKLES + zero_modifier + f"{safe_model_name}_thresholded_cil_{thresholds_str}.pkl", "wb") as f:
+with open(FOLDER_TO_STORE_PICKLES + type_modifier + f"{safe_model_name}_thresholded_cil_{thresholds_str}.pkl", "wb") as f:
     pickle.dump(thresholded_cil, f)
 # Serialize and save thresholded_count
-with open(FOLDER_TO_STORE_PICKLES + zero_modifier + f"{safe_model_name}_thresholded_count_{thresholds_str}.pkl", "wb") as f:
+with open(FOLDER_TO_STORE_PICKLES + type_modifier + f"{safe_model_name}_thresholded_count_{thresholds_str}.pkl", "wb") as f:
     pickle.dump(thresholded_count, f)
 # %%

@@ -33,7 +33,7 @@ for model_name in model_names:
             subprocess.run(["python", "GOOD_self_repair_graph_generator.py", 
                             "--model_name=" + model_name, 
                             "--batch_size=" + str(batch_size),
-                            "--zero_ablation=" + str(True)], 
+                            "--ablation_type=" + "mean"], 
                             check=True)  # check=True makes it raise an error if the command fails
             break  # If successful, proceed to next model
 
