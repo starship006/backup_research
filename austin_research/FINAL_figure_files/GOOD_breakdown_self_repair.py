@@ -20,14 +20,17 @@ FOLDER_TO_STORE_PICKLES = "pickle_storage/breakdown_self_repair/"
 if in_notebook_mode:
     model_name = "pythia-160m"
     BATCH_SIZE = 30
+    PERCENTILE = 0.02
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
     parser.add_argument('--batch_size', type=int, default=30)  
+    parser.add_argument('--percentile', type=float, default=0.02)
     args = parser.parse_args()
     
     model_name = args.model_name
     BATCH_SIZE = args.batch_size
+    PERCENTILE = args.percentile
 
 
 # %%
@@ -133,7 +136,6 @@ for batch in tqdm(range(num_batches)):
             self_repair_from_LN_across_everything[start_clean_prompt:end_clean_prompt, :, layer, head] = self_repair_from_LN
         
 # %%
-PERCENTILE = 0.02
 num_top_instances = int(PERCENTILE * TOTAL_PROMPTS_TO_ITERATE_THROUGH * (PROMPT_LEN - 1))
 
 
@@ -167,9 +169,11 @@ tensors_to_save = {
     "condensed_self_repair_from_LN": condensed_self_repair_from_LN
 }
 
+percentile_str = "" if PERCENTILE == 0.02 else f"{PERCENTILE}_" # 0.02 is the default
+
 # Loop through the dictionary and save each tensor
 for tensor_name, tensor_data in tensors_to_save.items():
-    with open(FOLDER_TO_STORE_PICKLES + f"{safe_model_name}_{tensor_name}", "wb") as f:
+    with open(FOLDER_TO_STORE_PICKLES + f"{percentile_str}{safe_model_name}_{tensor_name}", "wb") as f:
         pickle.dump(tensor_data, f)
 # %% Generate graph
 fig = make_subplots(rows=model.cfg.n_layers, cols=1, subplot_titles=[f'Layer {l}' for l in range(model.cfg.n_layers)])
@@ -185,7 +189,7 @@ for layer in range(model.cfg.n_layers):
 
 fig.update_layout(
     barmode='group',
-    title=f'Self-Repair Distribution by Component | {model_name}',
+    title=f'Self-Repair Distribution by Component | {model_name} | {PERCENTILE}th Percentile',
     xaxis_title='Heads',
     yaxis_title='Average Self-Repair',
     legend_title='Components',
@@ -197,6 +201,6 @@ if in_notebook_mode:
 # %%
 
 # save fig to html
-fig.write_html(FOLDER_TO_WRITE_GRAPHS_TO + f"self_repair_breakdown_{safe_model_name}.html")
+fig.write_html(FOLDER_TO_WRITE_GRAPHS_TO + f"{percentile_str}self_repair_breakdown_{safe_model_name}.html")
 
 # %%

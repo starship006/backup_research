@@ -13,7 +13,7 @@ FOLDER_TO_STORE_PICKLES = "pickle_storage/breakdown_self_repair/"
 
 
 if in_notebook_mode:
-    model_name = "pythia-160m"
+    model_name = "pythia-410m"
     BATCH_SIZE = 30
 else:
     parser = argparse.ArgumentParser()
@@ -85,8 +85,8 @@ def ablate_instance_and_get_repair(head: tuple, clean_tokens: Tensor, corrupted_
     return logit_diffs, direct_effects, ablated_direct_effects, self_repair_from_heads, self_repair_from_layers, self_repair_from_LN, self_repair
         
 # %% We need to iterate through the dataset to find the 
-TOTAL_PROMPTS_TO_ITERATE_THROUGH = 3000
-PROMPT_LEN = 400
+TOTAL_PROMPTS_TO_ITERATE_THROUGH = 300#3000
+PROMPT_LEN = 100#400
 
 num_batches = TOTAL_PROMPTS_TO_ITERATE_THROUGH // BATCH_SIZE
 # %%
@@ -98,7 +98,8 @@ direct_effects_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH,
 self_repair_from_LN_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
 self_repair_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
 # %%
-ablate_heads = [(10,4), (9,4), (11,5), (11,2)]
+#ablate_heads = [(10,4), (9,4), (11,5), (11,2)]
+ablate_heads = [(model.cfg.n_layers - 1, i) for i in range(6)]
 for batch in tqdm(range(num_batches)):
     # Get a batch of clean and corrupted tokens
     clean_batch_offset = batch * BATCH_SIZE
@@ -133,7 +134,7 @@ fig = go.Figure()
 min_val = self_repair_across_everything.mean(1).min()
 max_val = self_repair_across_everything.mean(1).max()
 
-num_bins = 1000
+num_bins = 500
 bin_size = (max_val - min_val) / num_bins
 
 
@@ -189,6 +190,33 @@ fig.show()
 fig.write_html(FOLDER_TO_WRITE_GRAPHS_TO + f"direct_effect_vs_self_repair_{safe_model_name}.html")
 
 # %% Especially the LN part
+fig = go.Figure()
+
+# Loop over each (layer, head) tuple
+for (layer, head) in ablate_heads:
+    # Calculate the mean self-repair and direct effect for this layer-head pair
+    ln_self_repair = self_repair_from_LN_across_everything[:10, :, layer, head].flatten().cpu().numpy()
+    direct_effect = direct_effects_across_everything[:10, :, layer, head].flatten().cpu().numpy()
+
+    # Add a scatter trace to the figure for this layer-head pair
+    fig.add_trace(go.Scatter(
+        x=direct_effect,
+        y=ln_self_repair,
+        mode='markers',  # Change to 'lines+markers' if you prefer
+        name=f"L{layer}H{head}",  # Naming each trace with the corresponding layer-head pair,
+        marker=dict(size=2)  # Decreased marker size
+    ))
+
+
+fig.update_layout(
+        title=f"Direct Effect vs. LN Self-Repair when ablating various layers and heads | {model_name}",
+        xaxis_title="Mean Direct Effect on Prompt",
+        yaxis_title="Mean Self-Repair on Prompt",
+        legend_title="Attention Head"
+    )
+
+fig.show()
+
 
 
 

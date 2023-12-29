@@ -66,7 +66,7 @@ def collect_direct_effect(de_cache: ActivationCache = None, correct_tokens: Floa
     
     # iterate over every neuron to avoid memory issues
     if collect_individual_neurons:
-        for neuron in tqdm(range(model.cfg.d_mlp)):
+        for neuron in range(model.cfg.d_mlp):
             single_neuron_output: Float[Tensor, "n_layer batch pos d_model"] = de_cache.stack_neuron_results(layer = -1, neuron_slice = (neuron, neuron + 1), return_labels = False, apply_ln = False)
             direct_effect_mlp[:, neuron, :, :] = residual_stack_to_direct_effect(single_neuron_output, token_residual_directions, scaling_cache = cache_for_scaling)
     # get per mlp layer effect
