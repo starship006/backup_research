@@ -133,15 +133,15 @@ def show_input(input_head_values: Float[Tensor, "n_layer n_head"], input_MLP_lay
     fig.show()
 
 
-def print_tokens(model, all_owt_tokens, batch, start = 40, end = 47):
-    """
-    Prints the tokens out of dataset given a batch and position index. Shares same indexing. Printing starts from beginning
-    Start: where to begin section 2 
-    End: where to end section 2
-    """
-    print(model.to_string(all_owt_tokens[batch, 0:start]))
-    print("...")
-    print(model.to_string(all_owt_tokens[batch, start:end]))
+# def print_tokens(model, all_owt_tokens, batch, start = 40, end = 47):
+#     """
+#     Prints the tokens out of dataset given a batch and position index. Shares same indexing. Printing starts from beginning
+#     Start: where to begin section 2 
+#     End: where to end section 2
+#     """
+#     print(model.to_string(all_owt_tokens[batch, 0:start]))
+#     print("...")
+#     print(model.to_string(all_owt_tokens[batch, start:end]))
 
 def get_correct_logit_score(
     logits: Float[Tensor, "batch seq d_vocab"],
@@ -151,7 +151,6 @@ def get_correct_logit_score(
     Returns the logit of the next token
 
     If per_prompt=True, return the array of differences rather than the average.
-    TESTED
     '''
     smaller_logits = logits[:, :-1, :]
     smaller_correct = clean_tokens[:, 1:].unsqueeze(-1)
@@ -163,19 +162,16 @@ def get_correct_logit_score(
 #                   [[10,999,2,3,4], [110,191,120,13,14], [1100,105,120,103,140]]])
 # get_correct_logit_score(a, clean_tokens = torch.tensor([[3, 2, 4], [0,1,2]]))
 
-def shuffle_owt_tokens_by_batch(owt_tokens) -> torch.tensor:
-    batch_size, num_tokens = owt_tokens.shape
-    shuffled_owt_tokens = torch.zeros_like(owt_tokens)
-    
-    for i in range(batch_size):
-        perm = torch.randperm(num_tokens)
-        shuffled_owt_tokens[i] = owt_tokens[i, perm]
-        
+
+def shuffle_owt_tokens_by_batch(owt_tokens: torch.Tensor, offset_shuffle=2) -> torch.Tensor:
+    """Shuffles the prompts in a batch by just moving them by an offset."""
+    # Roll the batch dimension by the specified offset
+    shuffled_owt_tokens = torch.roll(owt_tokens, shifts=offset_shuffle, dims=0)
     return shuffled_owt_tokens
+
 
 def return_item(item):
     return item
-
 
 def create_layered_scatter(
     heads_x: Float[Tensor, "layer head"],
@@ -308,7 +304,6 @@ def get_3d_projection(from_vector: Float[Tensor, "batch seq d_model"], to_vector
     return projections
 
 
-
 # %% Code to first intervene by subtracting output in residual stream
 def add_vector_to_resid(
     original_resid_stream: Float[Tensor, "batch seq d_model"],
@@ -426,6 +421,18 @@ def replace_output_of_specific_MLP_batch_pos_hook(
     return original_output
 
 
+def get_item_hook(
+    item,
+    hook: HookPoint,
+    storage: list
+):
+    '''
+    Hook that just returns this specific item.
+    '''
+    storage.append(item)
+    return item
+
+
 def replace_model_component_completely(
     model_comp,
     hook: HookPoint,
@@ -447,4 +454,5 @@ def get_single_correct_logit(logits: Float[Tensor, "batch pos d_vocab"],
     
     correct_next_token = tokens[batch, pos + 1]
     return logits[batch, pos, correct_next_token]
+    
     
