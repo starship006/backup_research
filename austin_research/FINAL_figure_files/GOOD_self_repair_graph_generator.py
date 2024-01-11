@@ -4,13 +4,13 @@ This code is responsible for making the self-repair graphs.
 # %%
 from imports import *
 from path_patching import act_patch
-from GOOD_helpers import is_notebook, shuffle_owt_tokens_by_batch, return_item, get_correct_logit_score, collect_direct_effect, create_layered_scatter, replace_output_hook
+from GOOD_helpers import is_notebook, shuffle_owt_tokens_by_batch, return_item, get_correct_logit_score, collect_direct_effect, create_layered_scatter, replace_output_hook, prepare_dataset
 # %% Constants
 in_notebook_mode = is_notebook()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 FOLDER_TO_WRITE_GRAPHS_TO = "figures/new_self_repair_graphs/"
 FOLDER_TO_STORE_PICKLES = "pickle_storage/new_graph_pickle/"
-NO_PADDING = True
+PADDING = False
 
 if in_notebook_mode:
     model_name = "gpt2-medium"#"pythia-160m"####
@@ -55,19 +55,6 @@ else:
 
 safe_model_name = model_name.replace("/", "_")
 model.set_use_attn_result(False)
-
-
-# %%
-dataset = utils.get_dataset("pile")
-dataset_name = "The Pile"
-
-PROMPT_LEN = 200
-
-if NO_PADDING:
-    new_dataset = utils.tokenize_and_concatenate(dataset, model.tokenizer, max_length = PROMPT_LEN) #type: ignore
-    all_dataset_tokens = new_dataset['tokens'].to(device) #type: ignore
-else:
-    all_dataset_tokens = model.to_tokens(dataset["text"]).to(device)
 # %% Helper Functions
 def new_logits_upon_ablation_calc(clean_tokens, corrupted_tokens, logits: Tensor, heads = None, mlp_layers = None, num_runs = 1, clean_cache: Union[None, ActivationCache] = None):
     """
@@ -86,9 +73,9 @@ def new_logits_upon_ablation_calc(clean_tokens, corrupted_tokens, logits: Tensor
         num_runs = 1 # since zero or mean ablation would be deterministic
     
     logits_accumulator = torch.zeros_like(logits, device=logits.device)
-    for _ in range(num_runs):
+    for i in range(num_runs):
         # Shuffle owt_tokens by batch
-        shuffled_corrupted_tokens = shuffle_owt_tokens_by_batch(corrupted_tokens)
+        shuffled_corrupted_tokens = shuffle_owt_tokens_by_batch(corrupted_tokens, offset_shuffle = i + 1)
         # Calculate new_logits using act_patch
         if ABLATION_TYPE == "zero":
             new_logits = act_patch(model, clean_tokens, nodes, return_item, new_cache = "zero", apply_metric_to_cache=False)# type: ignore
@@ -177,14 +164,13 @@ def get_thresholded_change_in_logits(clean_tokens, corrupted_tokens, logits: Ten
     return to_return
 
 # %% We need to iterate through the dataset
-TOTAL_PROMPTS_TO_ITERATE_THROUGH = 240 #around 500 / 2
 
-# BATCH_SIZE defined earlier
+PROMPT_LEN = 128
 
-num_batches = TOTAL_PROMPTS_TO_ITERATE_THROUGH // BATCH_SIZE
-assert model.tokenizer is not None
-PAD_TOKEN = model.to_tokens(model.tokenizer.pad_token)[-1, -1].item() 
-print("Percent of tokens that are padding tokens: ", (all_dataset_tokens[:(TOTAL_PROMPTS_TO_ITERATE_THROUGH + BATCH_SIZE), :PROMPT_LEN] == PAD_TOKEN).flatten().float().mean(-1))
+# total tokens needs to be at least 1M, but such that it batches nicely
+TOTAL_TOKENS = ((1_000_000 // (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
+dataset, num_batches = prepare_dataset(model, device, TOTAL_TOKENS, BATCH_SIZE, PROMPT_LEN, PADDING, "pile")
+
 # %% We filter out for specific instances where the direct effects are above a certain amount. By default, the figures in the paper don't worry about thresholds, but they are nice to have
 THRESHOLDS = [0.0] #[0.1 * i for i in range(0,12)]
 thresholded_de = torch.zeros((num_batches, len(THRESHOLDS), model.cfg.n_layers, model.cfg.n_heads))
@@ -192,22 +178,10 @@ thresholded_cil = torch.zeros((num_batches, len(THRESHOLDS), model.cfg.n_layers,
 thresholded_count = torch.zeros((num_batches, len(THRESHOLDS), model.cfg.n_layers, model.cfg.n_heads))
 
 # %% Run. This takes a while.
-for batch in tqdm(range(num_batches)):
-    # Get a batch of clean and corrupted tokens
-    clean_batch_offset = batch * BATCH_SIZE
-    start_clean_prompt = clean_batch_offset
-    end_clean_prompt = clean_batch_offset + BATCH_SIZE
-    
-    corrupted_batch_offset = (batch + 1) * BATCH_SIZE
-    start_corrupted_prompt = corrupted_batch_offset
-    end_corrupted_prompt = corrupted_batch_offset + BATCH_SIZE
+pbar = tqdm(total=num_batches, desc='Processing batches')
 
-    clean_tokens = all_dataset_tokens[start_clean_prompt:end_clean_prompt, :PROMPT_LEN]
-    corrupted_tokens = all_dataset_tokens[start_corrupted_prompt:end_corrupted_prompt, :PROMPT_LEN]
+for batch_idx, clean_tokens, corrupted_tokens in dataset:
     assert clean_tokens.shape == corrupted_tokens.shape == (BATCH_SIZE, PROMPT_LEN)
-    
-    
-    
     # Cache clean/corrupted model activations + direct effects
     logits, cache = model.run_with_cache(clean_tokens)
     assert isinstance(logits, Tensor)
@@ -222,10 +196,13 @@ for batch in tqdm(range(num_batches)):
         for head in range(model.cfg.n_heads):
             dict_results = get_thresholded_change_in_logits(clean_tokens, corrupted_tokens, logits, per_head_direct_effect, heads = [(layer, head)], thresholds = THRESHOLDS, cache = cache)
             for i, threshold in enumerate(THRESHOLDS):
-                thresholded_de[batch, i, layer, head] = dict_results[f"de_{threshold}"]
-                thresholded_cil[batch, i, layer, head] = dict_results[f"cil_{threshold}"]
-                thresholded_count[batch, i, layer, head] = dict_results[f"num_thresholded_{threshold}"]
+                thresholded_de[batch_idx, i, layer, head] = dict_results[f"de_{threshold}"]
+                thresholded_cil[batch_idx, i, layer, head] = dict_results[f"cil_{threshold}"]
+                thresholded_count[batch_idx, i, layer, head] = dict_results[f"num_thresholded_{threshold}"]
 
+    pbar.update(1)
+    
+pbar.close()
 # %% Average across batches
 thresholded_de = thresholded_de.mean(0)
 thresholded_cil = thresholded_cil.mean(0)

@@ -10,9 +10,10 @@ from imports import *
 #%load_ext autoreload
 #%autoreload 2
 from path_patching import act_patch
-from GOOD_helpers import *
+from GOOD_helpers import is_notebook, replace_output_hook, replace_model_component_completely, shuffle_owt_tokens_by_batch, get_correct_logit_score, return_item, collect_direct_effect, show_input
 #from updated_nmh_dataset_gen import generate_ioi_prompts
 # %% Constants
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 in_notebook_mode = is_notebook()
 
@@ -60,6 +61,9 @@ BATCH_SIZE = 10
 PROMPT_LEN = 200
 # %%
 def new_ld_upon_sample_ablation_calc_with_frozen_ln(cache, corrupted_cache, clean_tokens, heads = None, mlp_layers = None):
+    """
+    Sample ablates and freezes the final LN. Returns new logits
+    """
     assert heads != None and len(heads) == 1 and mlp_layers == None
     
     model.reset_hooks()
@@ -73,10 +77,8 @@ def new_ld_upon_sample_ablation_calc_with_frozen_ln(cache, corrupted_cache, clea
     return avg_correct_logit_score
     
     
-    
 
-
-def new_ld_upon_sample_ablation_calc(logits, clean_tokens, corrupted_tokens, heads = None, mlp_layers = None, num_runs = 2):
+def new_ld_upon_sample_ablation_calc(logits, clean_tokens, corrupted_tokens, heads = None, mlp_layers = None):
     """
     runs activation patching over component and returns new avg_correct_logit_score and avg_ln_scale, averaged over num_runs runs
     
@@ -91,28 +93,14 @@ def new_ld_upon_sample_ablation_calc(logits, clean_tokens, corrupted_tokens, hea
     if mlp_layers != None:
         nodes += [Node("mlp_out", layer) for layer in mlp_layers]
 
-    # use many shuffled!
-    logits_accumulator = torch.zeros_like(logits)
-    new_ln_accumulator = torch.zeros((BATCH_SIZE, PROMPT_LEN)).to(device)
-    
-    
-    for i in range(num_runs):
-        # Shuffle clean_tokens by batch
-        shuffled_corrupted_tokens = shuffle_owt_tokens_by_batch(corrupted_tokens)
-        # Calculate new_logits using act_patch
-        new_logits = act_patch(model, clean_tokens, nodes, return_item, shuffled_corrupted_tokens, apply_metric_to_cache=False)
-        new_cache = act_patch(model, clean_tokens, nodes, return_item, shuffled_corrupted_tokens, apply_metric_to_cache=True)
-        logits_accumulator += new_logits
-        
-        new_ln_accumulator += new_cache['ln_final.hook_scale'][..., 0]
 
-    avg_logits = logits_accumulator / num_runs
-    
-    avg_ln_scale = new_ln_accumulator / num_runs
-    
-    # get change in direct effect compared to original
+    # Calculate new logit score using act_patch
+    avg_logits = act_patch(model, clean_tokens, nodes, return_item, corrupted_tokens, apply_metric_to_cache=False)
     avg_correct_logit_score = get_correct_logit_score(avg_logits, clean_tokens)
-    
+    # Calculate new LN
+    new_cache = act_patch(model, clean_tokens, nodes, return_item, corrupted_tokens, apply_metric_to_cache=True)
+    avg_ln_scale = new_cache['ln_final.hook_scale'][..., 0]
+
     return avg_correct_logit_score, avg_ln_scale
 
 
@@ -187,8 +175,8 @@ y_data = change_in_logits_with_frozen_LN.flatten(-3,-1)
 color_data = head_direct_effects.flatten(-3,-1).cpu()
 
 # Calculate the 10th and 90th percentiles of color_data
-lower_bound = np.percentile(color_data, 1)
-upper_bound = np.percentile(color_data, 99)
+lower_bound = np.percentile(color_data, 0.1)
+upper_bound = np.percentile(color_data, 99.9)
 
 # Create scatter plot with color data
 scatter_plot = go.Scatter(
@@ -196,7 +184,7 @@ scatter_plot = go.Scatter(
     y=y_data, 
     mode='markers', 
     name='Data',
-    text=[f'Color Value: {val:.2f}' for val in color_data],  # Hover text for each point
+    text=[f'Direct Effect: {val:.2f}' for val in color_data],  # Hover text for each point
     marker=dict(
         color=color_data, 
         colorscale='Viridis',
@@ -244,7 +232,6 @@ def filter_top_percentile(x_data, y_data, color_data, percentile = 10, filter_fo
     return x_data_filtered, y_data_filtered
 
 
-
 x_data_filtered, y_data_filtered = filter_top_percentile(x_data, y_data, color_data, percentile=1, filter_for_only_positive_ratio = False)
 
 
@@ -270,11 +257,11 @@ fig.add_shape(
 fig.show()
 
 print("Mean: ", (y_data_filtered / x_data_filtered).mean())
-# %% Graphs of LN Scales
+# %% 
 clean_ln_scale_flat = clean_ln_scale.view(-1).numpy()
 ablated_ln_scale_flat = ablated_ln_scale.view(-1).numpy()
 
-
+# %%
 # Create Scatter plot plus y=x line
 trace_scatter = go.Scatter(x=clean_ln_scale_flat, y=ablated_ln_scale_flat, mode='markers', 
                           marker=dict(size=4, opacity=1), 
@@ -305,7 +292,6 @@ fig = go.Figure(data=[trace_scatter, trace_identity_line], layout=layout)
 
 # Show the figure
 fig.show()
-
 # %%
 ratio_trace = go.Histogram(x=clean_ln_scale_flat / ablated_ln_scale_flat, name='Clean to Ablated LN Scale Ratio', opacity=1)
 
@@ -336,7 +322,7 @@ print("Percent above 1: ", (clean_ln_scale_flat / ablated_ln_scale_flat > 1).sum
 
 
 # %% FILTERED vrsion
-clean_ln_scale_flat_filtered, ablated_ln_filtered = filter_top_percentile(clean_ln_scale_flat, ablated_ln_scale_flat, color_data, percentile=50, filter_for_only_positive_ratio = False)
+clean_ln_scale_flat_filtered, ablated_ln_filtered = filter_top_percentile(clean_ln_scale_flat, ablated_ln_scale_flat, color_data, percentile=2, filter_for_only_positive_ratio = False)
 ratio_trace = go.Histogram(x=clean_ln_scale_flat_filtered / ablated_ln_filtered, name='Clean to Ablated LN Scale Ratio', opacity=1)
 
 # Create layout

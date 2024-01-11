@@ -369,8 +369,7 @@ def replace_output_hook(
     '''
     Hook that replaces the output of a head with a new output
     '''
-    #print(original_output.shape)
-    #print(new_output.shape)
+    
     assert len(original_output.shape) == 4
     assert len(new_output.shape) == 3
     assert original_output.shape[0] == new_output.shape[0]
@@ -456,3 +455,47 @@ def get_single_correct_logit(logits: Float[Tensor, "batch pos d_vocab"],
     return logits[batch, pos, correct_next_token]
     
     
+# Function to generate a dataset function 
+def dataset_generator(dataset_tokens, batch_size, prompt_len):
+    total_prompts = dataset_tokens.shape[0]
+    num_batches = total_prompts // batch_size
+
+    for batch_idx in range(num_batches):
+        clean_batch_offset = batch_idx * batch_size
+        start_clean_prompt = clean_batch_offset
+        end_clean_prompt = clean_batch_offset + batch_size
+        
+        corrupted_batch_offset = (batch_idx + 1) * batch_size
+        start_corrupted_prompt = corrupted_batch_offset
+        end_corrupted_prompt = corrupted_batch_offset + batch_size
+
+        clean_tokens = dataset_tokens[start_clean_prompt:end_clean_prompt, :prompt_len]
+        corrupted_tokens = dataset_tokens[start_corrupted_prompt:end_corrupted_prompt, :prompt_len]
+        
+        yield batch_idx, clean_tokens, corrupted_tokens
+
+
+def prepare_dataset(model, device, TOTAL_TOKENS: int, BATCH_SIZE, PROMPT_LEN, padding: bool, dataset_name = "pile"):
+    """
+    returns the dataset, and the number of prompts in this dataset
+    """
+    dataset = utils.get_dataset(dataset_name)
+    
+    if not padding:
+        new_dataset = utils.tokenize_and_concatenate(dataset, model.tokenizer, max_length=PROMPT_LEN)
+        all_dataset_tokens = new_dataset['tokens'].to(device)
+    else:
+        print("Not complete yet")
+        all_dataset_tokens = model.to_tokens(dataset["text"]).to(device)
+        PAD_TOKEN = model.to_tokens(model.tokenizer.pad_token)[-1, -1].item() 
+        
+
+    assert len(all_dataset_tokens.shape) == 2
+    total_prompts = TOTAL_TOKENS // (PROMPT_LEN)
+    
+    
+    # Create the generator
+    dataset = dataset_generator(all_dataset_tokens[:total_prompts], BATCH_SIZE, PROMPT_LEN)
+    num_batches = total_prompts // BATCH_SIZE
+    return dataset, num_batches
+
