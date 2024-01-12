@@ -1,5 +1,5 @@
 """
-This code is responsible for making the self-repair graphs.
+This code is responsible for making the data needed for the general self-repair graphs.
 """
 # %%
 from imports import *
@@ -164,7 +164,6 @@ def get_thresholded_change_in_logits(clean_tokens, corrupted_tokens, logits: Ten
     return to_return
 
 # %% We need to iterate through the dataset
-
 PROMPT_LEN = 128
 
 # total tokens needs to be at least 1M, but such that it batches nicely
