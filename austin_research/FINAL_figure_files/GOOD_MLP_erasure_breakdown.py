@@ -8,7 +8,7 @@ Some interesting questions:
 # %%
 from imports import *
 from path_patching import act_patch
-from GOOD_helpers import is_notebook, show_input, collect_direct_effect, get_single_correct_logit, topk_of_Nd_tensor, return_item, get_correct_logit_score
+from GOOD_helpers import is_notebook, show_input, collect_direct_effect, get_single_correct_logit, topk_of_Nd_tensor, return_item, get_correct_logit_score, prepare_dataset
 # %% Constants
 in_notebook_mode = is_notebook()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -43,10 +43,6 @@ model = HookedTransformer.from_pretrained(
     device = device,
 )
 model.set_use_attn_result(True)
-# %%
-dataset = utils.get_dataset("pile")
-dataset_name = "The Pile"
-all_dataset_tokens = model.to_tokens(dataset["text"]).to(device)
 # %% 
 def ablate_instance_and_get_repair(head: tuple, clean_tokens: Tensor, corrupted_tokens: Tensor,
                                            per_head_direct_effect: Union[Tensor, None] = None,
@@ -95,41 +91,33 @@ def ablate_instance_and_get_repair(head: tuple, clean_tokens: Tensor, corrupted_
     return logit_diffs, direct_effects, ablated_direct_effects, self_repair_from_heads, self_repair_from_layers, self_repair_from_LN, self_repair, ablated_cache, ablated_logits
         
 # %% We need to iterate through the dataset to find the 
-TOTAL_PROMPTS_TO_ITERATE_THROUGH = 3000
-PROMPT_LEN = 400
-
-num_batches = TOTAL_PROMPTS_TO_ITERATE_THROUGH // BATCH_SIZE
+#TOTAL_PROMPTS_TO_ITERATE_THROUGH = 3000
+PROMPT_LEN = 128
+PADDING = False
+TOTAL_TOKENS = ((1_000_000// (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
+dataset, num_batches = prepare_dataset(model, device, TOTAL_TOKENS, BATCH_SIZE, PROMPT_LEN, PADDING, "pile")
 # %%
-logit_diffs_across_everything = torch.zeros(model.cfg.n_heads, TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1)
-direct_effects_across_everything = torch.zeros(model.cfg.n_heads,TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1)
-ablated_direct_effects_across_everything = torch.zeros(model.cfg.n_heads, TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1)
-self_repair_from_heads_across_everything = torch.zeros(model.cfg.n_heads, TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1)
-self_repair_from_layers_across_everything = torch.zeros(model.cfg.n_heads, TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1)
-self_repair_from_LN_across_everything = torch.zeros(model.cfg.n_heads, TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1)
-self_repair_across_everything = torch.zeros(model.cfg.n_heads, TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1)
+logit_diffs_across_everything = torch.zeros(model.cfg.n_heads, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
+direct_effects_across_everything = torch.zeros(model.cfg.n_heads,num_batches, BATCH_SIZE, PROMPT_LEN - 1)
+ablated_direct_effects_across_everything = torch.zeros(model.cfg.n_heads, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
+self_repair_from_heads_across_everything = torch.zeros(model.cfg.n_heads, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
+self_repair_from_layers_across_everything = torch.zeros(model.cfg.n_heads, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
+
+self_repair_from_LN_across_everything = torch.zeros(model.cfg.n_heads, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
+self_repair_across_everything = torch.zeros(model.cfg.n_heads, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
 
 
+last_layer_clean_neurons_across_everything = torch.zeros(model.cfg.n_heads, model.cfg.d_mlp, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
+last_layer_ablated_neurons_across_everything = torch.zeros(model.cfg.n_heads, model.cfg.d_mlp, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
 
-last_layer_clean_neurons_across_everything = torch.zeros(model.cfg.n_heads, model.cfg.d_mlp, TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1)
-last_layer_ablated_neurons_across_everything = torch.zeros(model.cfg.n_heads, model.cfg.d_mlp, TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1)
+positive_changes_in_neuron_from_layer = torch.zeros(model.cfg.n_heads, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
 # %%
 ablate_layer = model.cfg.n_layers - 2 # second to last layer
 
-for batch in tqdm(range(num_batches)):
+pbar = tqdm(total=num_batches, desc='Processing batches')
+for batch_idx, clean_tokens, corrupted_tokens in dataset:
     for ablate_head in range(model.cfg.n_heads):
-        # Get a batch of clean and corrupted tokens
-        clean_batch_offset = batch * BATCH_SIZE
-        start_clean_prompt = clean_batch_offset
-        end_clean_prompt = clean_batch_offset + BATCH_SIZE
-        
-        corrupted_batch_offset = (batch + 1) * BATCH_SIZE
-        start_corrupted_prompt = corrupted_batch_offset
-        end_corrupted_prompt = corrupted_batch_offset + BATCH_SIZE
-
-        clean_tokens = all_dataset_tokens[start_clean_prompt:end_clean_prompt, :PROMPT_LEN]
-        corrupted_tokens = all_dataset_tokens[start_corrupted_prompt:end_corrupted_prompt, :PROMPT_LEN]
         assert clean_tokens.shape == corrupted_tokens.shape == (BATCH_SIZE, PROMPT_LEN)
-        
         
         # Cache clean/corrupted model activations + direct effects
         logits, cache = model.run_with_cache(clean_tokens)
@@ -144,17 +132,23 @@ for batch in tqdm(range(num_batches)):
         
         
         # store activations
-        logit_diffs_across_everything[ablate_head, clean_batch_offset:corrupted_batch_offset, :] = logit_diffs
-        direct_effects_across_everything[ablate_head, clean_batch_offset:corrupted_batch_offset, :] = direct_effects
-        ablated_direct_effects_across_everything[ablate_head, clean_batch_offset:corrupted_batch_offset, :] = ablated_direct_effects
-        self_repair_from_heads_across_everything[ablate_head, clean_batch_offset:corrupted_batch_offset, :] = self_repair_from_heads
-        self_repair_from_layers_across_everything[ablate_head, clean_batch_offset:corrupted_batch_offset, :] = self_repair_from_layers
-        self_repair_from_LN_across_everything[ablate_head, clean_batch_offset:corrupted_batch_offset, :] = self_repair_from_LN
-        self_repair_across_everything[ablate_head, clean_batch_offset:corrupted_batch_offset, :] = self_repair
+        logit_diffs_across_everything[ablate_head, batch_idx, :, :] = logit_diffs
+        direct_effects_across_everything[ablate_head, batch_idx, :, :] = direct_effects
+        ablated_direct_effects_across_everything[ablate_head, batch_idx, :, :] = ablated_direct_effects
+        self_repair_from_heads_across_everything[ablate_head, batch_idx, :, :] = self_repair_from_heads
+        self_repair_from_layers_across_everything[ablate_head, batch_idx, :, :] = self_repair_from_layers
         
-        last_layer_clean_neurons_across_everything[ablate_head, :, clean_batch_offset:corrupted_batch_offset, :] = last_layer_clean_neurons
-        last_layer_ablated_neurons_across_everything[ablate_head, :, clean_batch_offset:corrupted_batch_offset, :] = last_layer_ablated_neurons
+        self_repair_from_LN_across_everything[ablate_head, batch_idx, :, :] = self_repair_from_LN
+        self_repair_across_everything[ablate_head, batch_idx, :, :] = self_repair
         
+        last_layer_clean_neurons_across_everything[ablate_head, :, batch_idx, :, :] = last_layer_clean_neurons
+        last_layer_ablated_neurons_across_everything[ablate_head, :, batch_idx, :, :] = last_layer_ablated_neurons
+
+        positive_changes = (last_layer_ablated_neurons - last_layer_clean_neurons).clamp(min=0)
+        positive_changes_in_neuron_from_layer[ablate_head, batch_idx, :, :] = positive_changes.sum(dim=0)
+
+        
+    pbar.update(1)
 # %% 
 
 # # %% 
@@ -174,91 +168,231 @@ for batch in tqdm(range(num_batches)):
 # print("Neurons with top self-repair:")
 # for neuron in top_self_repair_neurons:
 #     print(neuron, ":", (neuron_self_repair)[neuron].mean((-1, -2)).item())
+# %% Flatten the batches into one big batch
 
+logit_diffs_across_everything = logit_diffs_across_everything.flatten(1,2)
+direct_effects_across_everything = direct_effects_across_everything.flatten(1,2)
+ablated_direct_effects_across_everything = ablated_direct_effects_across_everything.flatten(1,2)
+self_repair_from_heads_across_everything = self_repair_from_heads_across_everything.flatten(1,2)
+self_repair_from_layers_across_everything = self_repair_from_layers_across_everything.flatten(1,2)
+self_repair_from_LN_across_everything = self_repair_from_LN_across_everything.flatten(1,2)
+self_repair_across_everything = self_repair_across_everything.flatten(1,2)
+
+last_layer_clean_neurons_across_everything = last_layer_clean_neurons_across_everything.flatten(2,3)
+last_layer_ablated_neurons_across_everything = last_layer_ablated_neurons_across_everything.flatten(2,3)
+
+positive_changes_in_neuron_from_layer = positive_changes_in_neuron_from_layer.flatten(1,2)
+
+# %% Filter out neurons
+last_layer_self_repair_across_everything = last_layer_ablated_neurons_across_everything - last_layer_clean_neurons_across_everything
+
+N = 20  # Example value
+
+# Initialize the result tensors with the appropriate sizes
+num_heads, d_mlp, num_prompts, prompt_len = last_layer_self_repair_across_everything.shape
+top_neurons_idx = torch.zeros((num_heads, num_prompts, prompt_len, N))
+top_neuron_vals = torch.zeros((num_heads, num_prompts, prompt_len, N))
+top_neuron_initial_vals = torch.zeros((num_heads, num_prompts, prompt_len, N))
+
+# Iterate over each head, prompt, and position to find the top N neurons
+for head in range(num_heads):
+    for prompt in range(num_prompts):
+        for position in range(prompt_len):
+            # Select the slice for the current head, prompt, and position
+            neurons = last_layer_self_repair_across_everything[head, :, prompt, position]
+            
+            # Use torch.topk to get the top N values and their indices
+            values, indices = torch.topk(neurons, N)
+            
+            # Store the results in the corresponding tensors
+            top_neurons_idx[head, prompt, position] = indices
+            top_neuron_vals[head, prompt, position] = values
+            top_neuron_initial_vals[head, prompt, position] = last_layer_clean_neurons_across_everything[head, :, prompt, position][indices]
+
+
+
+
+# %% SAVE THESE TENSORS:
+tensors_to_save = {
+    "logit_diffs_across_everything": logit_diffs_across_everything,
+    "direct_effects_across_everything": direct_effects_across_everything,
+    "ablated_direct_effects_across_everything": ablated_direct_effects_across_everything,
+    "self_repair_from_heads_across_everything": self_repair_from_heads_across_everything,
+    "self_repair_from_layers_across_everything": self_repair_from_layers_across_everything,
+    "self_repair_from_LN_across_everything": self_repair_from_LN_across_everything,
+    "self_repair_across_everything": self_repair_across_everything,
+    #"last_layer_clean_neurons_across_everything": last_layer_clean_neurons_across_everything,
+    #"last_layer_ablated_neurons_across_everything": last_layer_ablated_neurons_across_everything,
+    "top_neurons_idx": top_neurons_idx,
+    "top_neuron_vals": top_neuron_vals,
+    "top_neuron_initial_vals": top_neuron_initial_vals,
+    "positive_changes_in_neuron_from_layer": positive_changes_in_neuron_from_layer,
+}
+
+FOLDER_TO_STORE_PICKLES = "pickle_storage/mlp_sparsity/"
+subfolder_path = Path(FOLDER_TO_STORE_PICKLES) / safe_model_name
+subfolder_path.mkdir(parents=True, exist_ok=True)  # This creates the subfolder if it doesn't exist
+
+
+# Loop through the dictionary and save each tensor
+for tensor_name, tensor_data in tensors_to_save.items():
+    file_path = subfolder_path / f"MLPs_{tensor_name}_{safe_model_name}_L{ablate_layer}.pickle"
+    with open(file_path, "wb") as f:
+        pickle.dump(tensor_data, f)
 
 # %%
 
+# # %% First: MLP explains significant portion of self-repair
 
-for PERCENTILE in [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2]: # 
-    num_prompts_to_consider = int(TOTAL_PROMPTS_TO_ITERATE_THROUGH * PROMPT_LEN * PERCENTILE)
+# ADD_BOUNDS = True # if we should bound the values because noise
+
+
+# for PERCENTILE in [0.1]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
+#     num_prompts_to_consider = int(BATCH_SIZE * num_batches * PROMPT_LEN * PERCENTILE)
+#     print("Considering top", num_prompts_to_consider, "prompts")
+#     # Create the plot
+#     fig = go.Figure()
     
-    # Create the plot
-    fig = go.Figure()
-    
-    for head in range(model.cfg.n_heads):
-        neuron_self_repair = last_layer_ablated_neurons_across_everything[head] - last_layer_clean_neurons_across_everything[head]
-        top_self_repair = topk_of_Nd_tensor(self_repair_across_everything[head], num_prompts_to_consider)
-        top_self_repair_by_last_layer = topk_of_Nd_tensor(self_repair_from_layers_across_everything[head], num_prompts_to_consider)
-        top_DE_in_head = topk_of_Nd_tensor(direct_effects_across_everything[head], num_prompts_to_consider)
+#     for head in range(model.cfg.n_heads):
+#         neuron_self_repair = last_layer_ablated_neurons_across_everything[head] - last_layer_clean_neurons_across_everything[head]
+#         total_self_repair = self_repair_across_everything[head]
         
-        top_metric = top_DE_in_head
-        # AVERAGE SELF-REPAIR
-
-        all_cumulative_percentages = []
+#         top_DE_in_head = topk_of_Nd_tensor(direct_effects_across_everything[head], num_prompts_to_consider)
+#         filtered_batch_pos = top_DE_in_head
         
-
-        for batch, pos in top_metric:
-            # Calculate total sum for each specific (batch, pos) pair
-            total_sum = neuron_self_repair[:, batch, pos].sum()
-            if total_sum == 0:
-                continue
-
-            # Get the indices that would sort the array in descending order (using absolute values)
-            sorted_indices = torch.argsort(neuron_self_repair[:, batch, pos].abs(), descending=True)
-            #sorted_indices = torch.argsort(neuron_self_repair[:, batch, pos], descending=False)
-
-            # Calculate the cumulative sum of the sorted tensor
-            cumulative_sums = torch.cumsum(neuron_self_repair[:, batch, pos][sorted_indices], dim=0)
-
-            # Convert to percentage of total sum
-            cumulative_percentages = 100. * cumulative_sums / total_sum
-
-            # Append the cumulative percentages to the list
-            all_cumulative_percentages.append(cumulative_percentages.cpu().numpy())
-
-        # Convert the list of numpy arrays into a 2D numpy array for easier averaging
-        all_cumulative_percentages = np.array(all_cumulative_percentages)
+#         # AVERAGE SELF-REPAIR
+#         all_cumulative_percentages = []
+#         for batch, pos in filtered_batch_pos:
+#             summed_neuron_self_repair_instance = max(neuron_self_repair[:, batch, pos].sum(), 0) # if negative, make zero
+#             self_repair_instance = total_self_repair[batch, pos]
+#             if self_repair_instance <= 0:
+#                 continue
+            
+            
+#             percentage_from_neurons = (100. * summed_neuron_self_repair_instance / self_repair_instance).item()
+            
+#             if ADD_BOUNDS:
+#                 percentage_from_neurons = min(percentage_from_neurons, 100)
+#                 percentage_from_neurons = max(percentage_from_neurons, 0)
+            
+#             all_cumulative_percentages.append(percentage_from_neurons)
+            
+#         all_cumulative_percentages = np.array(all_cumulative_percentages)
+#         average_cumulative_percentages = np.mean(all_cumulative_percentages, axis=0)
         
-        # Calculate the average cumulative percentages across all (batch, pos) pairs
-        average_cumulative_percentages = np.mean(all_cumulative_percentages, axis=0)
+#         print(f"Head {head} | len {len(all_cumulative_percentages)} : " + str(average_cumulative_percentages))
+#         px.histogram(all_cumulative_percentages, title = f"Head {head} | len {len(all_cumulative_percentages)}").show()
         
         
         
-
-        # Determine X values (number of indices)
-        x_values = np.arange(1, len(neuron_self_repair[:, batch, pos]) + 1)
+#         # # Determine X values (number of indices)
+#         # x_values = np.arange(1, len(neuron_self_repair[:, batch, pos]) + 1)
 
     
-        fig.add_trace(go.Scatter(x=x_values, y=average_cumulative_percentages,
-                            mode='lines', name='L' + str(ablate_layer) + 'H' + str(head), text = [str(i) for i in top_metric]))
+#         # fig.add_trace(go.Scatter(x=x_values, y=average_cumulative_percentages,
+#         #                     mode='lines', name='L' + str(ablate_layer) + 'H' + str(head), text = [str(i) for i in filtered_batch_pos]))
     
-    fig.update_layout(
-        title=f"Average Cumulative Percentage of L{model.cfg.n_layers - 1} Self-Repair explained by Top-X Neurons on Top {PERCENTILE * 100}% Examples of L{ablate_layer}",
-        xaxis_title="Top X Neurons",
-        yaxis_title="Average Percentage of Total Sum",
-        yaxis=dict(tickformat=".2f"),
-    )
+#     # fig.update_layout(
+#     #     title=f"Average Cumulative Percentage of L{model.cfg.n_layers - 1} Self-Repair explained by Top-X Neurons on Top {PERCENTILE * 100}% Examples of L{ablate_layer}",
+#     #     xaxis_title="Top X Neurons",
+#     #     yaxis_title="Average Percentage of Total Sum",
+#     #     yaxis=dict(tickformat=".2f"),
+#     # )
 
-    if in_notebook_mode:
-        fig.show()
+#     # if in_notebook_mode:
+#     #     fig.show()
 
-    fig.write_html(FOLDER_TO_WRITE_GRAPHS_TO + f"average_cumulative_self_repair_{safe_model_name}_L{ablate_layer}_{PERCENTILE}.html")
+#     #fig.write_html(FOLDER_TO_WRITE_GRAPHS_TO + f"average_cumulative_self_repair_{safe_model_name}_L{ablate_layer}_{PERCENTILE}.html")
+
+
+
+
+
+
+# # %% Next: A few neurons explain all the self-repair
+# for PERCENTILE in [ 0.2]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
+    
+#     num_prompts_to_consider = int(BATCH_SIZE * num_batches * PROMPT_LEN * PERCENTILE)
+    
+#     # Create the plot
+#     fig = go.Figure()
+    
+#     for head in range(model.cfg.n_heads):
+#         neuron_self_repair = last_layer_ablated_neurons_across_everything[head] - last_layer_clean_neurons_across_everything[head]
+        
+#         #top_self_repair = topk_of_Nd_tensor(self_repair_across_everything[head], num_prompts_to_consider)
+#         #top_self_repair_by_last_layer = topk_of_Nd_tensor(self_repair_from_layers_across_everything[head], num_prompts_to_consider)
+#         top_DE_in_head = topk_of_Nd_tensor(direct_effects_across_everything[head], num_prompts_to_consider)
+        
+#         filtered_batch_pos = top_DE_in_head
+        
+#         # AVERAGE SELF-REPAIR
+#         all_cumulative_percentages = []
+#         for batch, pos in filtered_batch_pos:
+#             # Calculate total sum for each specific (batch, pos) pair
+#             total_neuron_self_repair = neuron_self_repair[:, batch, pos].sum()
+            
+#             if total_neuron_self_repair == 0:
+#                 continue
+
+#             # Get the indices that would sort the array in descending order (using absolute values)
+#             sorted_indices = torch.argsort(neuron_self_repair[:, batch, pos].abs(), descending=True)
+#             #sorted_indices = torch.argsort(neuron_self_repair[:, batch, pos], descending=False)
+
+#             # Calculate the cumulative sum of the sorted tensor
+#             cumulative_sums = torch.cumsum(neuron_self_repair[:, batch, pos][sorted_indices], dim=0)
+
+#             # Convert to percentage of total sum
+#             cumulative_percentages = 100. * cumulative_sums / total_neuron_self_repair
+
+#             # Append the cumulative percentages to the list
+            
+#             all_cumulative_percentages.append(cumulative_percentages.cpu().numpy())
+
+#         # Convert the list of numpy arrays into a 2D numpy array for easier averaging
+#         print(all_cumulative_percentages)
+#         all_cumulative_percentages = np.array(all_cumulative_percentages)
+#         print(all_cumulative_percentages)
+        
+#         # Calculate the average cumulative percentages across all (batch, pos) pairs
+#         average_cumulative_percentages = np.mean(all_cumulative_percentages, axis=0)
+        
+        
+        
+#         # Determine X values (number of indices)
+#         x_values = np.arange(1, len(neuron_self_repair[:, batch, pos]) + 1)
+
+    
+#         fig.add_trace(go.Scatter(x=x_values, y=average_cumulative_percentages,
+#                             mode='lines', name='L' + str(ablate_layer) + 'H' + str(head), text = [str(i) for i in filtered_batch_pos]))
+    
+#     fig.update_layout(
+#         title=f"Average Cumulative Percentage of L{model.cfg.n_layers - 1} Self-Repair explained by Top-X Neurons on Top {PERCENTILE * 100}% Examples of L{ablate_layer}",
+#         xaxis_title="Top X Neurons",
+#         yaxis_title="Average Percentage of Total Sum",
+#         yaxis=dict(tickformat=".2f"),
+#     )
+
+#     if in_notebook_mode:
+#         fig.show()
+
+#     #fig.write_html(FOLDER_TO_WRITE_GRAPHS_TO + f"average_cumulative_self_repair_{safe_model_name}_L{ablate_layer}_{PERCENTILE}.html")
 
 
 # %%
 # %% Save the data to pickle
-tensors_to_save = {
-    "last_layer_clean_neurons_across_everything": last_layer_clean_neurons_across_everything,
-    "last_layer_ablated_neurons_across_everything": last_layer_ablated_neurons_across_everything,
-    "self_repair_across_everything": self_repair_across_everything,
-    "direct_effects_across_everything": direct_effects_across_everything,
-    "self_repair_from_layers_across_everything": self_repair_from_layers_across_everything,
-}
+# tensors_to_save = {
+#     "last_layer_clean_neurons_across_everything": last_layer_clean_neurons_across_everything,
+#     "last_layer_ablated_neurons_across_everything": last_layer_ablated_neurons_across_everything,
+#     "self_repair_across_everything": self_repair_across_everything,
+#     "direct_effects_across_everything": direct_effects_across_everything,
+#     "self_repair_from_layers_across_everything": self_repair_from_layers_across_everything,
+# }
 
-# Loop through the dictionary and save each tensor
-for tensor_name, tensor_data in tensors_to_save.items():
-    with open(FOLDER_TO_STORE_PICKLES + f"MLPs_{tensor_name}_{safe_model_name}_L{ablate_layer}.pickle", "wb") as f:
-        pickle.dump(tensor_data, f)
+# # Loop through the dictionary and save each tensor
+# for tensor_name, tensor_data in tensors_to_save.items():
+#     with open(FOLDER_TO_STORE_PICKLES + f"MLPs_{tensor_name}_{safe_model_name}_L{ablate_layer}.pickle", "wb") as f:
+#         pickle.dump(tensor_data, f)
 
 # # %% Generate graph
 # fig = make_subplots(rows=model.cfg.n_layers, cols=1, subplot_titles=[f'Layer {l}' for l in range(model.cfg.n_layers)])

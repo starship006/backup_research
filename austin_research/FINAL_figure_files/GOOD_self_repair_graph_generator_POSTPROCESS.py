@@ -113,7 +113,7 @@ fig.update_layout(
 )
 
 # Add annotation for 'self-repair' zone
-fig.add_annotation(ex
+fig.add_annotation(
    x=(min(fig.data[0]['x']) + max(fig.data[0]['x'])) / 2 + 0.2, # middle of x range
    y=(-min(fig.data[0]['x']) + 0.05) / 2 - 0.2, # middle of y range
    text="Self-repair Zone",

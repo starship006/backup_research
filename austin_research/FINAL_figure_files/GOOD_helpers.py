@@ -476,6 +476,7 @@ def dataset_generator(dataset_tokens, batch_size, prompt_len):
         if corrupted_tokens.shape[0] == 0:
             corrupted_tokens = dataset_tokens[:batch_size, :prompt_len] # loop it back around
         
+        
         yield batch_idx, clean_tokens, corrupted_tokens
 
 
@@ -497,7 +498,9 @@ def prepare_dataset(model, device, TOTAL_TOKENS: int, BATCH_SIZE, PROMPT_LEN, pa
     assert len(all_dataset_tokens.shape) == 2
     total_prompts = TOTAL_TOKENS // (PROMPT_LEN)
     num_batches = total_prompts // BATCH_SIZE
-    #assert num_batches > 1, "Need to have more than 2 batches for corrupt prompt gen to work"
+    
+    if(num_batches <= 1):
+        raise ValueError("Need to have more than 2 batches for corrupt prompt gen to work")
     
     # Create the generator
     dataset = dataset_generator(all_dataset_tokens[:total_prompts], BATCH_SIZE, PROMPT_LEN)
