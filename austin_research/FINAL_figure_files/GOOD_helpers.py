@@ -166,6 +166,9 @@ def get_correct_logit_score(
 def shuffle_owt_tokens_by_batch(owt_tokens: torch.Tensor, offset_shuffle=2) -> torch.Tensor:
     """Shuffles the prompts in a batch by just moving them by an offset."""
     # Roll the batch dimension by the specified offset
+    if offset_shuffle == 0:
+        print("Warning: offset_shuffle = 0, so no shuffling is happening")
+    
     shuffled_owt_tokens = torch.roll(owt_tokens, shifts=offset_shuffle, dims=0)
     return shuffled_owt_tokens
 

@@ -56,7 +56,7 @@ else:
 safe_model_name = model_name.replace("/", "_")
 model.set_use_attn_result(False)
 
-# %% Store the tensors as pickles
+# %%  Tensors stored as pickles
 type_modifier = "ZERO_" if ABLATION_TYPE == "zero" else ("MEAN_" if ABLATION_TYPE == "mean" else "")
 THRESHOLDS = [0.0]
 thresholds_str = "_".join(map(str, THRESHOLDS))  # Converts thresholds list to a string

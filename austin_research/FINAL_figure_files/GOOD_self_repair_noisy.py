@@ -4,7 +4,7 @@ This code generates graphs that display how noisy self-repair is; i.e., how many
 # %%
 from imports import *
 from path_patching import act_patch
-from GOOD_helpers import is_notebook, show_input, collect_direct_effect, get_single_correct_logit, topk_of_Nd_tensor, return_item, get_correct_logit_score
+from GOOD_helpers import is_notebook, show_input, collect_direct_effect, get_single_correct_logit, topk_of_Nd_tensor, return_item, get_correct_logit_score, prepare_dataset
 # %% Constants
 in_notebook_mode = is_notebook()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -85,12 +85,16 @@ def ablate_instance_and_get_repair(head: tuple, clean_tokens: Tensor, corrupted_
     return logit_diffs, direct_effects, ablated_direct_effects, self_repair_from_heads, self_repair_from_layers, self_repair_from_LN, self_repair
         
 # %% We need to iterate through the dataset to find the 
-TOTAL_PROMPTS_TO_ITERATE_THROUGH = 300#3000
-PROMPT_LEN = 100#400
+PROMPT_LEN = 100
+TOTAL_TOKENS = ((5_000 // (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
+dataset, num_batches = prepare_dataset(model, device, TOTAL_TOKENS, BATCH_SIZE, PROMPT_LEN, False, "pile")
 
-num_batches = TOTAL_PROMPTS_TO_ITERATE_THROUGH // BATCH_SIZE
+TOTAL_PROMPTS_TO_ITERATE_THROUGH = num_batches * BATCH_SIZE
+#TOTAL_PROMPTS_TO_ITERATE_THROUGH = 300#3000
+#PROMPT_LEN = 100#400
+
 # %%
-# logit_diffs_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
+logit_diffs_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
 direct_effects_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
 # ablated_direct_effects_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
 # self_repair_from_heads_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
@@ -98,36 +102,28 @@ direct_effects_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH,
 self_repair_from_LN_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
 self_repair_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
 # %%
-#ablate_heads = [(10,4), (9,4), (11,5), (11,2)]
-ablate_heads = [(model.cfg.n_layers - 1, i) for i in range(6)]
-for batch in tqdm(range(num_batches)):
-    # Get a batch of clean and corrupted tokens
-    clean_batch_offset = batch * BATCH_SIZE
-    start_clean_prompt = clean_batch_offset
-    end_clean_prompt = clean_batch_offset + BATCH_SIZE
-    
-    corrupted_batch_offset = (batch + 1) * BATCH_SIZE
-    start_corrupted_prompt = corrupted_batch_offset
-    end_corrupted_prompt = corrupted_batch_offset + BATCH_SIZE
+pbar = tqdm(total=num_batches, desc='Processing batches')
 
-    clean_tokens = all_dataset_tokens[start_clean_prompt:end_clean_prompt, :PROMPT_LEN]
-    corrupted_tokens = all_dataset_tokens[start_corrupted_prompt:end_corrupted_prompt, :PROMPT_LEN]
+ablate_heads = [(20,6), (22,3), (22,11), (20,14)]
+#ablate_heads = [(model.cfg.n_layers - 1, i) for i in range(6)]
+for batch_idx, clean_tokens, corrupted_tokens in dataset:
     assert clean_tokens.shape == corrupted_tokens.shape == (BATCH_SIZE, PROMPT_LEN)
-    
     
     # Cache clean/corrupted model activations + direct effects
     logits, cache = model.run_with_cache(clean_tokens)
+    start_clean_prompt = batch_idx * BATCH_SIZE
+    end_clean_prompt = start_clean_prompt + BATCH_SIZE
     
     for ablate_layer, ablate_head in ablate_heads:
         per_head_direct_effect, all_layer_direct_effect = collect_direct_effect(cache, correct_tokens=clean_tokens, model = model, display = False, collect_individual_neurons = False)
         logit_diffs, direct_effects, _, _, _, self_repair_from_LN, self_repair = ablate_instance_and_get_repair((ablate_layer, ablate_head), clean_tokens, corrupted_tokens, per_head_direct_effect, all_layer_direct_effect, cache, logits)
         
-        
+        logit_diffs_across_everything[start_clean_prompt:end_clean_prompt, :, ablate_layer, ablate_head] = logit_diffs
         direct_effects_across_everything[start_clean_prompt:end_clean_prompt, :, ablate_layer, ablate_head] = direct_effects
         self_repair_from_LN_across_everything[start_clean_prompt:end_clean_prompt, :, ablate_layer, ablate_head] = self_repair_from_LN
         self_repair_across_everything[start_clean_prompt:end_clean_prompt, :, ablate_layer, ablate_head] = self_repair
     
-
+    pbar.update(1)
 # %% First: Self-repair is noisy. Plot the distribution of self-repair values across all prompts
 fig = go.Figure()
 
@@ -216,9 +212,46 @@ fig.update_layout(
     )
 
 fig.show()
+# %% Self-repair is noisy: just plot DE vs change in logits
 
+fig = plotly.subplots.make_subplots(
+    rows=2, cols=2,
+    shared_xaxes=False,
+    shared_yaxes=True,
+    vertical_spacing=0.25,
+    horizontal_spacing=0.15,
+    specs=[[{"type": "scatter"}] * 2]*2,
+    subplot_titles=[f"L{layer}H{head}" for layer, head in ablate_heads],
+)
 
+colors = ['red', 'green', 'blue', 'orange']
 
+for i, (layer, head) in enumerate(ablate_heads):
+    logit_diffs = logit_diffs_across_everything[:, :, layer, head].flatten().cpu().numpy()
+    direct_effect = direct_effects_across_everything[:, :, layer, head].flatten().cpu().numpy()
+
+    fig.add_trace(go.Scatter(
+        x=direct_effect,
+        y=logit_diffs,
+        mode='markers',
+        name=f"L{layer}H{head}",
+        marker=dict(size=2, color=colors[i]),
+    ), row=(i // 2) + 1, col=(i % 2) + 1)
+
+fig.update_layout(
+    title=f"Direct Effect vs. Change in Logits when Ablating Attention Heads in {model_name}",
+    showlegend=False,
+    margin=dict(l=40, r=40, t=60, b=40),
+    xaxis=dict(anchor='y', color='black'),
+    yaxis=dict(anchor='x', color='black'),
+    #width=1200,
+    #height=800
+)
+
+fig.update_xaxes(title_text="Direct Effect", zeroline=True, zerolinecolor='black', range=[-4, 4])
+fig.update_yaxes(title_text="Logit Difference", zeroline = True, zerolinecolor='black', range=[-4, 4])
+fig.show()
+fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + f"many_tokens_direct_effect_vs_logit_diff_{safe_model_name}.pdf")
 
 
 
