@@ -108,11 +108,11 @@ def new_ld_upon_sample_ablation_calc(logits, clean_tokens, corrupted_tokens, hea
 
 
 # %% Generate data
-TOTAL_TOKENS = ((100_000 // (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
+TOTAL_TOKENS = ((1_000_000 // (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
 dataset, num_batches = prepare_dataset(model, device, TOTAL_TOKENS, BATCH_SIZE, PROMPT_LEN, False, "pile")
 
 layer = model.cfg.n_layers - 1 # constant for now
-head = 9# constant for now
+head = 2# constant for now
 
 
 clean_logit = torch.zeros((num_batches, BATCH_SIZE, PROMPT_LEN - 1)) 
@@ -220,8 +220,7 @@ if in_notebook_mode:
 
 
 # %%
-x_data_filtered, y_data_filtered = filter_top_percentile(x_data, y_data, color_data, percentile=1, filter_for_only_positive_ratio = False)
-
+x_data_filtered, y_data_filtered = filter_top_percentile(x_data, y_data, color_data, percentile=2, filter_for_only_positive_ratio = False)
 
 # %%
 #x_data_filtered, y_data_filtered = x_data, y_data
@@ -309,7 +308,7 @@ fig = go.Figure(data=[ratio_trace], layout=layout)
 # )
 
 fig.write_image(f"figures/LN_graphs/{safe_model_name}_L{layer}H{head}_everything_.pdf")
-print("Percent above 1: ", (clean_ln_scale_flat / ablated_ln_scale_flat > 1).sum() / len(clean_ln_scale_flat))
+print(f"Percent above 1: ", (clean_ln_scale_flat / ablated_ln_scale_flat > 1).sum() / len(clean_ln_scale_flat))
 
 
 
@@ -334,7 +333,7 @@ if in_notebook_mode:
     fig.show()
     
     
-print("Percent above 1: ", (clean_ln_scale_flat_filtered / ablated_ln_filtered > 1).sum() / len(clean_ln_scale_flat_filtered))
+print(f"Percent above 1: ", (clean_ln_scale_flat_filtered / ablated_ln_filtered > 1).sum() / len(clean_ln_scale_flat_filtered))
 fig.write_image(f"figures/LN_graphs/{safe_model_name}_L{layer}H{head}_top{filter_percentile}_percentile_.pdf")
 # %%
 
@@ -352,3 +351,4 @@ fig.add_shape(
 if in_notebook_mode:
     fig.show()
 fig.write_image(f"figures/LN_graphs/{safe_model_name}_L{layer}H{head}_top{filter_percentile}_percentile_LINE_.pdf")
+# %%

@@ -104,7 +104,7 @@ self_repair_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PR
 # %%
 pbar = tqdm(total=num_batches, desc='Processing batches')
 
-ablate_heads = [(20,6), (22,3), (22,11), (20,14)]
+ablate_heads = [(20,6), (22,3), (22,11), (20,14)] # use these for pythia-410m
 #ablate_heads = [(model.cfg.n_layers - 1, i) for i in range(6)]
 for batch_idx, clean_tokens, corrupted_tokens in dataset:
     assert clean_tokens.shape == corrupted_tokens.shape == (BATCH_SIZE, PROMPT_LEN)

@@ -4,7 +4,7 @@ This code analyzes how the ablation of attention head leads to changes in the re
 # %%
 from imports import *
 from path_patching import act_patch
-from GOOD_helpers import is_notebook, shuffle_owt_tokens_by_batch, return_item, get_correct_logit_score, collect_direct_effect, show_input, create_layered_scatter, replace_output_hook
+from GOOD_helpers import is_notebook, shuffle_owt_tokens_by_batch, return_item, get_correct_logit_score, collect_direct_effect, show_input, create_layered_scatter, replace_output_hook, prepare_dataset
 # %% Constants
 in_notebook_mode = is_notebook()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -13,7 +13,7 @@ FOLDER_TO_STORE_PICKLES = "pickle_storage/"
 
 
 if in_notebook_mode:
-    model_name = "pythia-410m"
+    model_name = "pythia-160m"
     BATCH_SIZE = 15
 else:
     parser = argparse.ArgumentParser()
@@ -49,7 +49,7 @@ def get_norm_from_cache(cache: ActivationCache) -> Float[Tensor, "batch pos"]:
     return final_resid.norm(dim = -1)
 
 
-def new_norm_upon_ablation_calc(clean_tokens, corrupted_tokens, ablation_type: str, heads = None, mlp_layers = None, clean_cache: ActivationCache = None):
+def new_cache_upon_ablation_calc(clean_tokens, corrupted_tokens, ablation_type: str, heads = None, mlp_layers = None, clean_cache: ActivationCache = None):
     nodes = []
     if heads != None :
         nodes += [Node("z", layer, head) for (layer,head) in heads]
@@ -64,6 +64,7 @@ def new_norm_upon_ablation_calc(clean_tokens, corrupted_tokens, ablation_type: s
     new_cache = None
     if ablation_type == "zero":
         new_cache = act_patch(model, clean_tokens, nodes, return_item, new_cache = "zero", apply_metric_to_cache=True)
+        new_logits = act_patch(model, clean_tokens, nodes, return_item, new_cache = "zero", apply_metric_to_cache=False)
     elif ablation_type == "mean":
         assert clean_cache is not None, "clean_cache must be provided for mean ablation"
         assert len(nodes) == 1 and mlp_layers == None and heads != None, "mean ablation currently only works for one head"
@@ -78,74 +79,117 @@ def new_norm_upon_ablation_calc(clean_tokens, corrupted_tokens, ablation_type: s
         model.reset_hooks()
         hook = partial(replace_output_hook, new_output = avg_output_of_layer, head = heads[0][1])
         model.add_hook(utils.get_act_name("z", heads[0][0]), hook)
-        _, new_cache = model.run_with_cache(clean_tokens)
+        new_logits, new_cache = model.run_with_cache(clean_tokens)
         model.reset_hooks()
     else:
         new_cache = act_patch(model, clean_tokens, nodes, return_item, shuffled_corrupted_tokens, apply_metric_to_cache=True)
-      
+        new_logits = act_patch(model, clean_tokens, nodes, return_item, shuffled_corrupted_tokens, apply_metric_to_cache=False)
     assert isinstance(new_cache, ActivationCache)
-    return get_norm_from_cache(new_cache)
-
-
+    return new_cache, new_logits
 
 
 # %% We need to iterate through the dataset
-TOTAL_PROMPTS_TO_ITERATE_THROUGH = 200
 
-# BATCH_SIZE defined earlier
 PROMPT_LEN = 400
-
-num_batches = TOTAL_PROMPTS_TO_ITERATE_THROUGH // BATCH_SIZE
 # %% Run. This takes a while.
 ABLATION_TYPES = ["mean", "zero", "sample"]
+layer = 11
+head = 0
 
-for layer in range(model.cfg.n_layers - 1, model.cfg.n_layers):
-    for head in [0]:#range(model.cfg.n_heads):
-        norm_ratios = torch.zeros((num_batches, len(ABLATION_TYPES), BATCH_SIZE, PROMPT_LEN))
+PROMPT_LEN = 100
+TOTAL_TOKENS = ((10_000 // (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
+dataset, num_batches = prepare_dataset(model, device, TOTAL_TOKENS, BATCH_SIZE, PROMPT_LEN, False, "pile")
 
-        for batch in tqdm(range(num_batches)):
-            # Get a batch of clean and corrupted tokens
-            clean_batch_offset = batch * BATCH_SIZE
-            start_clean_prompt = clean_batch_offset
-            end_clean_prompt = clean_batch_offset + BATCH_SIZE
-            
-            corrupted_batch_offset = (batch + 1) * BATCH_SIZE
-            start_corrupted_prompt = corrupted_batch_offset
-            end_corrupted_prompt = corrupted_batch_offset + BATCH_SIZE
 
-            clean_tokens = all_dataset_tokens[start_clean_prompt:end_clean_prompt, :PROMPT_LEN]
-            corrupted_tokens = all_dataset_tokens[start_corrupted_prompt:end_corrupted_prompt, :PROMPT_LEN]
-            assert clean_tokens.shape == corrupted_tokens.shape == (BATCH_SIZE, PROMPT_LEN)
-            
-            
-            # Cache clean/corrupted model activations + direct effects
-            logits, cache = model.run_with_cache(clean_tokens)
-            #corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens)
-            
-            clean_norm = get_norm_from_cache(cache)
+# %%
+
+norm_ratios = torch.zeros((num_batches, len(ABLATION_TYPES), BATCH_SIZE, PROMPT_LEN))
+direct_effects = torch.zeros((num_batches, len(ABLATION_TYPES), BATCH_SIZE, PROMPT_LEN-1))
+logit_diff = torch.zeros((num_batches, len(ABLATION_TYPES), BATCH_SIZE, PROMPT_LEN-1))
+
+pbar = tqdm(total=num_batches, desc='Processing batches')
+for batch_idx, clean_tokens, corrupted_tokens in dataset:
+    # Cache clean/corrupted model activations + direct effects
+    logits, cache = model.run_with_cache(clean_tokens)
+    #corrupted_logits, corrupted_cache = model.run_with_cache(corrupted_tokens)
+    
+    clean_norm = get_norm_from_cache(cache)
+    direct_effect_all_heads, _ = collect_direct_effect(cache, clean_tokens, model, display = False, cache_for_scaling = cache)
+    clean_correct_logits = get_correct_logit_score(logits, clean_tokens)
+    
+    new_norms = []
+    
+    for ablation_type in ABLATION_TYPES:
+        assert ablation_type in ["mean", "zero", "sample"], "Ablation type must be 'mean', 'zero', or 'sample'."
+        new_cache, new_logit = new_cache_upon_ablation_calc(clean_tokens, corrupted_tokens, ablation_type, heads = [(layer, head)], clean_cache = cache)
+        ablation_norm = get_norm_from_cache(new_cache)
+        #ablated_direct_effect_head, _ = collect_direct_effect(new_cache, clean_tokens, model, display = False, cache_for_scaling = cache)
+        ablated_correct_logits = get_correct_logit_score(new_logit, clean_tokens)
         
-            new_norms = []
-            
-            for ablation_type in ABLATION_TYPES:
-                assert ablation_type in ["mean", "zero", "sample"], "Ablation type must be 'mean', 'zero', or 'sample'."
-                
-                ablated_norm = new_norm_upon_ablation_calc(clean_tokens, corrupted_tokens, ablation_type, heads = [(layer, head)], clean_cache = cache)
-                norm_ratios[batch, ABLATION_TYPES.index(ablation_type), :, :] = (ablated_norm / clean_norm).cpu()
-                
-            
-        # make histogram 
-        new_norms = [norm_ratios[:, i, ...].flatten() for i in range(len(ABLATION_TYPES))]
-        hist_data = [go.Histogram(x=norm, name=ablation_type, opacity=0.7) for ablation_type, norm in zip(ABLATION_TYPES, new_norms)]
+        
+        
+        norm_ratios[batch_idx, ABLATION_TYPES.index(ablation_type), :, :] = (ablation_norm / clean_norm).cpu()
+        direct_effects[batch_idx, ABLATION_TYPES.index(ablation_type), :, :] = (direct_effect_all_heads[layer, head]).cpu()
+        logit_diff[batch_idx, ABLATION_TYPES.index(ablation_type), :, :] = (ablated_correct_logits - clean_correct_logits).cpu()
+        
+    pbar.update(1)
+        
+    
+# make histogram for LN ablation comparison
+new_norms = [norm_ratios[:, i, ...].flatten() for i in range(len(ABLATION_TYPES))]
+hist_data = [go.Histogram(x=norm, name=ablation_type, opacity=0.7) for ablation_type, norm in zip(ABLATION_TYPES, new_norms)]
 
-        layout = go.Layout(
-            title=f'Norm of Final Residual Stream when Ablation Layer {layer}, Head {head}',
-            xaxis=dict(title='Ratio of Ablated to Clean Norm'),
-            yaxis=dict(title='Frequency'),
-            barmode='overlay'  # Overlay histograms for better comparison
-        )
+layout = go.Layout(
+    title=f'Norm of Final Residual Stream when Ablation Layer {layer}, Head {head}',
+    xaxis=dict(title='Ratio of Ablated to Clean Norm'),
+    yaxis=dict(title='Frequency'),
+    barmode='overlay'  # Overlay histograms for better comparison
+)
 
-        fig = go.Figure(data=hist_data, layout=layout)
-        fig.show()
+fig = go.Figure(data=hist_data, layout=layout)
+fig.show()
+
+
+# make histogram for direct effect vs logit diff comparison
+        
+# %%
+fig = plotly.subplots.make_subplots(
+    rows=1, cols=3,
+    shared_xaxes=False,
+    shared_yaxes=True,
+    vertical_spacing=0.25,
+    horizontal_spacing=0.15,
+    #specs=[[{"type": "scatter"}] * 2]*2,
+    subplot_titles=ABLATION_TYPES,
+)
+colors = ['purple', 'light blue', 'pink', ]
+
+for i in range(3):
+    
+    logit_diffs = logit_diff[:, i, :, :].flatten()
+    direct_effect = direct_effects[:, i, :, :].flatten()
+    ablation = ABLATION_TYPES[i]
+
+    fig.add_trace(go.Scatter(
+        x=direct_effect,
+        y=logit_diffs,
+        mode='markers',
+        name=ablation,
+        marker=dict(size=2, color=colors[i]),
+    ), row=1, col = i+1)
+
+
+fig.update_layout(
+        title=f"Self-Repair when ablating L{layer}H{head} in {model_name}",
+        xaxis_title="Direct Effect",
+        yaxis_title="Logit Difference",
+        # Additional layout parameters for better visualization
+        barmode='overlay'
+    )
+fig.update_xaxes(title_text="Direct Effect", zeroline=True, zerolinecolor='black', range=[-4, 4])
+fig.update_yaxes(title_text="Logit Difference", zeroline = True, zerolinecolor='black', range=[-4, 4])
+
+fig.show()
 
 
 # %%
