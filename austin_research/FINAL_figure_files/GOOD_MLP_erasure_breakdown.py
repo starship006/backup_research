@@ -102,6 +102,9 @@ direct_effects_across_everything = torch.zeros(model.cfg.n_heads,num_batches, BA
 ablated_direct_effects_across_everything = torch.zeros(model.cfg.n_heads, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
 self_repair_from_heads_across_everything = torch.zeros(model.cfg.n_heads, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
 self_repair_from_layers_across_everything = torch.zeros(model.cfg.n_heads, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
+direct_effects_from_layers_across_everything = torch.zeros(model.cfg.n_heads, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
+
+
 
 self_repair_from_LN_across_everything = torch.zeros(model.cfg.n_heads, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
 self_repair_across_everything = torch.zeros(model.cfg.n_heads, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
@@ -137,6 +140,8 @@ for batch_idx, clean_tokens, corrupted_tokens in dataset:
         ablated_direct_effects_across_everything[ablate_head, batch_idx, :, :] = ablated_direct_effects
         self_repair_from_heads_across_everything[ablate_head, batch_idx, :, :] = self_repair_from_heads
         self_repair_from_layers_across_everything[ablate_head, batch_idx, :, :] = self_repair_from_layers
+        direct_effects_from_layers_across_everything[ablate_head, batch_idx, :, :] = all_layer_direct_effect[-1]
+        
         
         self_repair_from_LN_across_everything[ablate_head, batch_idx, :, :] = self_repair_from_LN
         self_repair_across_everything[ablate_head, batch_idx, :, :] = self_repair
@@ -177,6 +182,8 @@ self_repair_from_heads_across_everything = self_repair_from_heads_across_everyth
 self_repair_from_layers_across_everything = self_repair_from_layers_across_everything.flatten(1,2)
 self_repair_from_LN_across_everything = self_repair_from_LN_across_everything.flatten(1,2)
 self_repair_across_everything = self_repair_across_everything.flatten(1,2)
+direct_effects_from_layers_across_everything = direct_effects_from_layers_across_everything.flatten(1,2)
+
 
 last_layer_clean_neurons_across_everything = last_layer_clean_neurons_across_everything.flatten(2,3)
 last_layer_ablated_neurons_across_everything = last_layer_ablated_neurons_across_everything.flatten(2,3)
@@ -227,6 +234,7 @@ tensors_to_save = {
     "top_neuron_vals": top_neuron_vals,
     "top_neuron_initial_vals": top_neuron_initial_vals,
     "positive_changes_in_neuron_from_layer": positive_changes_in_neuron_from_layer,
+    "direct_effects_from_layers_across_everything": direct_effects_from_layers_across_everything,
 }
 
 FOLDER_TO_STORE_PICKLES = "pickle_storage/mlp_sparsity/"

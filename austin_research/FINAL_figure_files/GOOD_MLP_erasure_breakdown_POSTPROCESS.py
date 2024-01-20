@@ -58,6 +58,7 @@ direct_effects_across_everything = torch.zeros(model.cfg.n_heads,num_prompts, PR
 ablated_direct_effects_across_everything = torch.zeros(model.cfg.n_heads, num_prompts, PROMPT_LEN - 1)
 self_repair_from_heads_across_everything = torch.zeros(model.cfg.n_heads, num_prompts, PROMPT_LEN - 1)
 self_repair_from_layers_across_everything = torch.zeros(model.cfg.n_heads, num_prompts, PROMPT_LEN - 1)
+direct_effects_from_layers_across_everything = torch.zeros(model.cfg.n_heads, num_prompts, PROMPT_LEN - 1)
 self_repair_from_LN_across_everything = torch.zeros(model.cfg.n_heads, num_prompts, PROMPT_LEN - 1)
 self_repair_across_everything = torch.zeros(model.cfg.n_heads, num_prompts, PROMPT_LEN - 1)
 
@@ -81,6 +82,7 @@ tensors_to_load = {
     "top_neurons_idx",
     "top_neuron_vals", #val = self repair value
     "top_neuron_initial_vals",
+    "direct_effects_from_layers_across_everything"
 }
 # %%
 FOLDER_TO_STORE_PICKLES = "pickle_storage/mlp_sparsity/"
@@ -242,7 +244,7 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
     for head in range(model.cfg.n_heads):
         clean_direct_effect = torch.zeros(num_prompts_to_consider) # DE of top self-repair neuron on clean
         corrupted_direct_effect = torch.zeros(num_prompts_to_consider) # DE of top self-repair neuron on corrupted
-        
+        layer_direct_effect = torch.zeros(num_prompts_to_consider) # DE of entire layer on corrupted
         top_neurons_self_repair = top_neuron_vals[head]
         filtered_batch_pos = topk_of_Nd_tensor(self_repair_from_layers_across_everything[head], num_prompts_to_consider)
 
@@ -252,18 +254,46 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
             batch, pos = batch_pos
             clean_direct_effect[i] = top_neuron_initial_vals[head, batch, pos, 0]
             corrupted_direct_effect[i] = top_neurons_self_repair[batch, pos, 0] + top_neuron_initial_vals[head, batch, pos, 0] # self_repair = corrupted - clean
+            layer_direct_effect[i] = direct_effects_from_layers_across_everything[-1, batch, pos]
         
-        fig = px.scatter(x = clean_direct_effect, y = corrupted_direct_effect,  title = "L" + str(ablate_layer) + "H" + str(head))
+        fig = px.scatter(x = clean_direct_effect, y = corrupted_direct_effect, color = layer_direct_effect, title = "L" + str(ablate_layer) + "H" + str(head))
         
-        fig.add_trace(go.Scatter(x=[min(clean_direct_effect), max(clean_direct_effect)], y=[min(clean_direct_effect), max(clean_direct_effect)], mode='lines', name='y=x', line=dict(color='#ADD8E6')))
+        fig.add_trace(go.Scatter(x=[min(clean_direct_effect), max(clean_direct_effect)], y=[min(clean_direct_effect), max(clean_direct_effect)], mode='lines', name='y=x', line=dict(color='darkgray')))
         fig.update_traces(marker_size=2)
         fig.update_layout(
-            title=f'Clean and Corrupted Direct Effect of top Self-Repairing Neuron when ablating L{ablate_layer}H{head}'+ ' | Top ' + str(PERCENTILE * 100) + '%',
+            title=f'Clean/Ablated Direct Effects of top Self-Repairing Neuron when ablating L{ablate_layer}H{head} in {safe_model_name}'+ ' | Top ' + str(PERCENTILE * 100) + '%',
             xaxis_title='Clean Direct Effect',
-            yaxis_title='Corrupted Direct Effect',
+            yaxis_title='Ablated Direct Effect',
+            coloraxis=dict(
+                colorscale=[
+                    [0, 'rosybrown'],   # Red for negative values
+                    [0.5, 'white'],
+                    [0.75, 'lightblue'],  # Blue for positive values
+                    [1, 'darkblue']
+                    ],
+                cmid=0,                # Midpoint (white)
+                cmin=-16,              # Minimum color (-12)
+                cmax=16               # Maximum color (12)
+            ),
         )
-
+        fig.update_layout(coloraxis_colorbar=dict(yanchor="top", y=1, x=-0.2,
+                                          ticks="outside", title = "Last MLP DE"))
+        
+        range_size = 5.5       
+        fig.update_layout(
+            xaxis=dict(range=[-range_size,range_size]),
+            yaxis=dict(range=[-range_size,range_size])
+        )
+        
+        
+        fig.update_layout(
+            width = 1000,
+            height = 500,
+        )
         fig.show()
+# %%
+fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + f"erasure_neuron/{safe_model_name}_L{ablate_layer}H{11}_{PERCENTILE}.pdf")    
+
 
 # %% It's not the case that the same neurons are performing self-repair
 top_x_neurons = 10
