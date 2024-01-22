@@ -300,7 +300,7 @@ top_x_neurons = 10
 for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
     num_prompts_to_consider = int(num_prompts * prompt_len_minus_one * PERCENTILE)
     print("Considering top", num_prompts_to_consider, "prompts")
-
+    print("BRUH YOU SHOULD CHANGE TITLE")
     for head in range(model.cfg.n_heads):
         clean_direct_effect = torch.zeros(num_prompts_to_consider) # DE of top self-repair neuron on clean
         corrupted_direct_effect = torch.zeros(num_prompts_to_consider) # DE of top self-repair neuron on corrupted

@@ -9,7 +9,7 @@ And determines how much each component contributes to self-repair
 # %%
 from imports import *
 from path_patching import act_patch
-from GOOD_helpers import is_notebook, show_input, collect_direct_effect, get_single_correct_logit, topk_of_Nd_tensor, return_item, get_correct_logit_score
+from GOOD_helpers import is_notebook, show_input, collect_direct_effect, get_single_correct_logit, topk_of_Nd_tensor, return_item, get_correct_logit_score, prepare_dataset
 # %% Constants
 in_notebook_mode = is_notebook()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -89,13 +89,15 @@ def ablate_top_instances_and_get_breakdown(head: tuple, clean_tokens: Tensor, co
     self_repair_from_layers = (ablated_all_layer_direct_effect - all_layer_direct_effect).sum(0)
     self_repair_from_LN = self_repair - self_repair_from_heads - self_repair_from_layers   # "self repair from LN" is the residual
     
-    return logit_diffs, direct_effects, ablated_direct_effects, self_repair_from_heads, self_repair_from_layers, self_repair_from_LN
+    return logit_diffs, direct_effects, ablated_direct_effects, self_repair_from_heads, self_repair_from_layers, self_repair_from_LN, self_repair
         
 # %% We need to iterate through the dataset to find the 
-TOTAL_PROMPTS_TO_ITERATE_THROUGH = 3000
-PROMPT_LEN = 400
+PROMPT_LEN = 128
+TOTAL_TOKENS = ((1_000_000 // (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
 
-num_batches = TOTAL_PROMPTS_TO_ITERATE_THROUGH // BATCH_SIZE
+
+dataset, num_batches = prepare_dataset(model, device, TOTAL_TOKENS, BATCH_SIZE, PROMPT_LEN, False, "pile")
+TOTAL_PROMPTS_TO_ITERATE_THROUGH = num_batches * BATCH_SIZE
 # %%
 logit_diffs_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
 direct_effects_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
@@ -103,22 +105,20 @@ ablated_direct_effects_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_
 self_repair_from_heads_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
 self_repair_from_layers_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
 self_repair_from_LN_across_everything = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
+
+
+percent_LN_of_DE = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
+percent_heads_of_DE = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
+percent_layers_of_DE = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
+percent_self_repair_of_DE = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
+
 # %%
+pbar = tqdm(total=num_batches, desc='Processing batches')
 
-for batch in tqdm(range(num_batches)):
-    # Get a batch of clean and corrupted tokens
-    clean_batch_offset = batch * BATCH_SIZE
-    start_clean_prompt = clean_batch_offset
-    end_clean_prompt = clean_batch_offset + BATCH_SIZE
-    
-    corrupted_batch_offset = (batch + 1) * BATCH_SIZE
-    start_corrupted_prompt = corrupted_batch_offset
-    end_corrupted_prompt = corrupted_batch_offset + BATCH_SIZE
-
-    clean_tokens = all_dataset_tokens[start_clean_prompt:end_clean_prompt, :PROMPT_LEN]
-    corrupted_tokens = all_dataset_tokens[start_corrupted_prompt:end_corrupted_prompt, :PROMPT_LEN]
+for batch_idx, clean_tokens, corrupted_tokens in dataset:
     assert clean_tokens.shape == corrupted_tokens.shape == (BATCH_SIZE, PROMPT_LEN)
-    
+    start_clean_prompt = batch_idx * BATCH_SIZE
+    end_clean_prompt = start_clean_prompt + BATCH_SIZE
     
     # Cache clean/corrupted model activations + direct effects
     logits, cache = model.run_with_cache(clean_tokens)
@@ -126,7 +126,7 @@ for batch in tqdm(range(num_batches)):
 
     for layer in range(model.cfg.n_layers):
         for head in range(model.cfg.n_heads):
-            logit_diffs, direct_effects, ablated_direct_effects, self_repair_from_heads, self_repair_from_layers, self_repair_from_LN = ablate_top_instances_and_get_breakdown((layer, head), clean_tokens, corrupted_tokens, per_head_direct_effect, all_layer_direct_effect, cache, logits)
+            logit_diffs, direct_effects, ablated_direct_effects, self_repair_from_heads, self_repair_from_layers, self_repair_from_LN, self_repair = ablate_top_instances_and_get_breakdown((layer, head), clean_tokens, corrupted_tokens, per_head_direct_effect, all_layer_direct_effect, cache, logits)
             
             logit_diffs_across_everything[start_clean_prompt:end_clean_prompt, :, layer, head] = logit_diffs
             direct_effects_across_everything[start_clean_prompt:end_clean_prompt, :, layer, head] = direct_effects
@@ -134,6 +134,13 @@ for batch in tqdm(range(num_batches)):
             self_repair_from_heads_across_everything[start_clean_prompt:end_clean_prompt, :, layer, head] = self_repair_from_heads
             self_repair_from_layers_across_everything[start_clean_prompt:end_clean_prompt, :, layer, head] = self_repair_from_layers
             self_repair_from_LN_across_everything[start_clean_prompt:end_clean_prompt, :, layer, head] = self_repair_from_LN
+            
+            percent_LN_of_DE[start_clean_prompt:end_clean_prompt, :, layer, head] = np.clip((self_repair_from_LN / direct_effects).cpu(), 0, 1)
+            percent_heads_of_DE[start_clean_prompt:end_clean_prompt, :, layer, head] = np.clip((self_repair_from_heads / direct_effects).cpu(), 0, 1)
+            percent_layers_of_DE[start_clean_prompt:end_clean_prompt, :, layer, head] = np.clip((self_repair_from_layers / direct_effects).cpu(), 0, 1)
+            percent_self_repair_of_DE[start_clean_prompt:end_clean_prompt, :, layer, head] = np.clip((self_repair / direct_effects).cpu(), 0, 1)
+            
+    pbar.update(1)
         
 # %%
 num_top_instances = int(PERCENTILE * TOTAL_PROMPTS_TO_ITERATE_THROUGH * (PROMPT_LEN - 1))
@@ -145,6 +152,11 @@ condensed_ablated_direct_effects = torch.zeros((model.cfg.n_layers, model.cfg.n_
 condensed_self_repair_from_heads = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
 condensed_self_repair_from_layers = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
 condensed_self_repair_from_LN = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
+
+condensed_percent_LN_of_DE = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
+condensed_percent_heads_of_DE = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
+condensed_percent_layers_of_DE = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
+condensed_percent_self_repair_of_DE = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
 
 for layer in tqdm(range(model.cfg.n_layers)):
     for head in range(model.cfg.n_heads):
@@ -159,6 +171,11 @@ for layer in tqdm(range(model.cfg.n_layers)):
         condensed_self_repair_from_layers[layer, head] = torch.stack([self_repair_from_layers_across_everything[batch, pos, layer, head] for batch, pos in top_indices]).mean()
         condensed_self_repair_from_LN[layer, head] = torch.stack([self_repair_from_LN_across_everything[batch, pos, layer, head] for batch, pos in top_indices]).mean()
         
+        condensed_percent_LN_of_DE[layer, head] = torch.stack([percent_LN_of_DE[batch, pos, layer, head] for batch, pos in top_indices]).nanmean()
+        condensed_percent_heads_of_DE[layer, head] = torch.stack([percent_heads_of_DE[batch, pos, layer, head] for batch, pos in top_indices]).nanmean()
+        condensed_percent_layers_of_DE[layer, head] = torch.stack([percent_layers_of_DE[batch, pos, layer, head] for batch, pos in top_indices]).nanmean()
+        condensed_percent_self_repair_of_DE[layer, head] = torch.stack([percent_self_repair_of_DE[batch, pos, layer, head] for batch, pos in top_indices]).nanmean()
+        
 # %% Save the data to pickle
 tensors_to_save = {
     "condensed_logit_diff": condensed_logit_diff,
@@ -166,7 +183,11 @@ tensors_to_save = {
     "condensed_ablated_direct_effects": condensed_ablated_direct_effects,
     "condensed_self_repair_from_heads": condensed_self_repair_from_heads,
     "condensed_self_repair_from_layers": condensed_self_repair_from_layers,
-    "condensed_self_repair_from_LN": condensed_self_repair_from_LN
+    "condensed_self_repair_from_LN": condensed_self_repair_from_LN,
+    "condensed_percent_LN_of_DE": condensed_percent_LN_of_DE,
+    "condensed_percent_heads_of_DE": condensed_percent_heads_of_DE,
+    "condensed_percent_layers_of_DE": condensed_percent_layers_of_DE,
+    "condensed_percent_self_repair_of_DE": condensed_percent_self_repair_of_DE,
 }
 
 percentile_str = "" if PERCENTILE == 0.02 else f"{PERCENTILE}_" # 0.02 is the default
