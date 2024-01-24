@@ -34,15 +34,30 @@ else:
 
 
 # %%
+
+from transformers import LlamaForCausalLM, LlamaTokenizer
+from constants import LLAMA_MODEL_PATH # change LLAMA_MODEL_PATH to the path of your llama model weights
+
+if "llama" in model_name:
+    tokenizer = LlamaTokenizer.from_pretrained(LLAMA_MODEL_PATH) 
+    if tokenizer.pad_token is None:
+        tokenizer.add_special_tokens({'pad_token': '<unk>'})
+    
+    hf_model = LlamaForCausalLM.from_pretrained(LLAMA_MODEL_PATH, low_cpu_mem_usage=True)
+    
+    model = HookedTransformer.from_pretrained("llama-7b", hf_model=hf_model, device="cpu", fold_ln=False, center_writing_weights=False, center_unembed=False, tokenizer=tokenizer)
+    model: HookedTransformer = model.to("cuda" if torch.cuda.is_available() else "cpu") #type: ignore
+else:
+    model = HookedTransformer.from_pretrained(
+        model_name,
+        center_unembed = True,
+        center_writing_weights = True,
+        fold_ln = True, # TODO; understand this
+        refactor_factored_attn_matrices = False,
+        device = device,
+    )
+
 safe_model_name = model_name.replace("/", "_")
-model = HookedTransformer.from_pretrained(
-    model_name,
-    center_unembed = True, 
-    center_writing_weights = True,
-    fold_ln = True, # TODO; understand this
-    refactor_factored_attn_matrices = False,
-    device = device,
-)
 model.set_use_attn_result(True)
 # %%
 dataset = utils.get_dataset("pile")
@@ -93,7 +108,7 @@ def ablate_top_instances_and_get_breakdown(head: tuple, clean_tokens: Tensor, co
         
 # %% We need to iterate through the dataset to find the 
 PROMPT_LEN = 128
-TOTAL_TOKENS = ((1_000_000 // (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
+TOTAL_TOKENS = ((100_000 // (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
 
 
 dataset, num_batches = prepare_dataset(model, device, TOTAL_TOKENS, BATCH_SIZE, PROMPT_LEN, False, "pile")
@@ -158,6 +173,8 @@ condensed_percent_heads_of_DE = torch.zeros((model.cfg.n_layers, model.cfg.n_hea
 condensed_percent_layers_of_DE = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
 condensed_percent_self_repair_of_DE = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
 
+
+
 for layer in tqdm(range(model.cfg.n_layers)):
     for head in range(model.cfg.n_heads):
         # get top indicies
@@ -176,6 +193,8 @@ for layer in tqdm(range(model.cfg.n_layers)):
         condensed_percent_layers_of_DE[layer, head] = torch.stack([percent_layers_of_DE[batch, pos, layer, head] for batch, pos in top_indices]).nanmean()
         condensed_percent_self_repair_of_DE[layer, head] = torch.stack([percent_self_repair_of_DE[batch, pos, layer, head] for batch, pos in top_indices]).nanmean()
         
+        
+full_percent_self_repair_of_DE = percent_self_repair_of_DE.nanmean((0, 1))
 # %% Save the data to pickle
 tensors_to_save = {
     "condensed_logit_diff": condensed_logit_diff,
@@ -188,6 +207,7 @@ tensors_to_save = {
     "condensed_percent_heads_of_DE": condensed_percent_heads_of_DE,
     "condensed_percent_layers_of_DE": condensed_percent_layers_of_DE,
     "condensed_percent_self_repair_of_DE": condensed_percent_self_repair_of_DE,
+    "full_percent_self_repair_of_DE": full_percent_self_repair_of_DE,
 }
 
 percentile_str = "" if PERCENTILE == 0.02 else f"{PERCENTILE}_" # 0.02 is the default
