@@ -8,7 +8,7 @@ FOLDER_TO_STORE_PICKLES = "pickle_storage/breakdown_self_repair/"
 FOLDER_TO_WRITE_GRAPHS_TO = "figures/new_self_repair_graphs/comparison_graphs/"
 ABLATION_TYPE = "sample"
 
-models_to_consider = ["pythia-160m", "gpt2-small", "pythia-410m", "gpt2-medium"] #  
+models_to_consider = ["pythia-160m", "gpt2-small", "pythia-410m", "gpt2-medium", "gpt2-large", "llama-7b"] #  
 safe_model_names = []
 for model_name in models_to_consider:
     safe_model_names.append(model_name.replace("/", "_"))
@@ -24,7 +24,6 @@ tensors_to_load = {
     "condensed_percent_LN_of_DE": [],
     "condensed_percent_heads_of_DE": [],
     "condensed_percent_layers_of_DE": [],
-    
     "condensed_percent_self_repair_of_DE": [],
     #"full_percent_self_repair_of_DE": [],
 }
@@ -60,17 +59,14 @@ for i in range(len(tensors_to_load["condensed_self_repair_from_LN"])):
     percent_from_LNs.append(percent_from_LN)
 
 
-
 def plot_heads_and_models(intended_value_list, title="Graph", x_axis_title="Layer", y_axis_title="Something", y_range=[0, 1],
-                          rescaled_x=False):
+                          rescaled_x=False, y_percentage = True):
     fig = go.Figure()
     colors = px.colors.qualitative.Dark2
-    
-    
-    marker_style = dict(size=3, opacity=0.2)
-    line_style = dict(width=2)
-    
-    
+
+    marker_style = dict(size=3, opacity=0.25)
+    line_style = dict(width=3)
+
     head_traces = []
     mean_traces = []
 
@@ -89,12 +85,14 @@ def plot_heads_and_models(intended_value_list, title="Graph", x_axis_title="Laye
         # Use a single trace for markers and lines
         
         head_traces.append(go.Scatter(x=x_layer_tensor_for_heads, y=data_for_model.flatten(), mode="markers",
-                                 name=models_to_consider[i], line=dict(color=colors[i], **line_style),
+                                 name=models_to_consider[i], legendgroup=i,
+                                 line=dict(color=colors[i], **line_style),
                                  marker=dict(color=colors[i], **marker_style)))
         
         # Plot the mean line
         mean_traces.append(go.Scatter(x=x_layer_tensor_for_mean, y=means_per_layer, mode="lines",
-                                 name='Mean ' + models_to_consider[i], line=dict(color=colors[i], **line_style)))
+                                 name=models_to_consider[i], legendgroup=i,
+                                 line=dict(color=colors[i], **line_style)))
 
     for trace in head_traces:
         fig.add_trace(trace)
@@ -103,44 +101,65 @@ def plot_heads_and_models(intended_value_list, title="Graph", x_axis_title="Laye
         fig.add_trace(trace)
         
     # Update layout for better aesthetics
-    fig.update_xaxes(title=x_axis_title, showgrid = False, showline=False)
+    fig.update_xaxes(title=x_axis_title, showgrid = False, zeroline = False, showline=False)
     if rescaled_x:
-        fig.update_xaxes(tickformat=".0%", range = [0, 1])
-    fig.update_yaxes(range=y_range, title=y_axis_title, tickformat=".0%")
+        fig.update_xaxes(tickformat=".0%", range = [-0.02, 1], tickfont=dict(size=18))
+    fig.update_yaxes(range=y_range, title=y_axis_title, tickformat=".0%" if y_percentage else "", tickfont=dict(size=18),
+                     zerolinecolor = 'Grey')
+    fig.update_layout(title=title, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),)
     
-    fig.update_yaxes(ticksuffix = "  ")
     
-    
-    fig.update_layout(title=title, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-
     
     fig.update_layout(
         autosize=False,
-        width=900,
+        width=1200,
         height=600,
-        
+        font=dict(
+            #family="Courier New, monospace",
+            size=18,
+            #color="RebeccaPurple"
+        )
     )
 
     # Show the plot
     fig.show()
     return fig
-# %%   Plot for self-repair entirely
-fig = plot_heads_and_models(tensors_to_load["condensed_percent_self_repair_of_DE"], title = "Self-Repair from Heads (as % of DE)",
-                      y_axis_title = "Self-Repair from Head (as % of DE)", x_axis_title= "%th Layer in Model", rescaled_x=True)
 
-fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + "self_repair_full_comparison.pdf")
+
+# %%   Plot for self-repair entirely
+fig = plot_heads_and_models(tensors_to_load["condensed_percent_self_repair_of_DE"], title = "Self-Repair (as % of DE)",
+                      y_axis_title = "Self-Repair (as % of DE)", x_axis_title= "%th Layer in Model", rescaled_x=True)
+
+#fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + "self_repair_full_comparison.pdf")
 #plot_heads_and_models(tensors_to_load["full_percent_self_repair_of_DE"], title = "Self-Repair from Heads (in % of DE)", y_axis_title = "Self-Repair from Head")
 
+# %% with logits?
 
 
+self_repair_as_logits = []
+
+for i in range(len(tensors_to_load["condensed_self_repair_from_LN"])):
+    self_repair = tensors_to_load["condensed_logit_diff"][i] - (tensors_to_load["condensed_ablated_direct_effects"][i] - tensors_to_load["condensed_direct_effects"][i])
+    self_repair_as_logits.append(self_repair)
+
+
+
+fig = plot_heads_and_models(self_repair_as_logits, title = "Self-Repair (as logits)",
+                      y_axis_title = "Self-Repair (as logits)", x_axis_title= "%th Layer in Model", rescaled_x=True, y_percentage=False, y_range=[-1, 1])
+
+fig.add_annotation(x=.2, y=0.2, text="Early-Layer Breakage", font=dict(color="red"), xref="paper", yref="paper", showarrow=False)
+fig.add_annotation(x=.8, y=.95, text="Self-Repairing", font=dict(color="#007BFF"), xref="paper", yref="paper", showarrow = False)#fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + "self_repair_full_comparison_logits.pdf")
+
+fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + "self_repair_full_comparison_logits.pdf")
 # %%
-#plot_heads_and_models(tensors_to_load["condensed_self_repair_from_LN"], title = "Self-Repair from LayerNorm (in Logits)", y_axis_title = "Self-Repair from LayerNorm (in Logits)", rescaled_x=True)
+plot_heads_and_models(tensors_to_load["condensed_self_repair_from_LN"], title = "Self-Repair from LayerNorm (in Logits)", y_axis_title = "Self-Repair from LayerNorm (in Logits)", rescaled_x=True)
 #plot_heads_and_models(percent_from_LNs, title = "Self-Repair from LayerNorm (in % of DE)", y_axis_title = "Self-Repair from LayerNorm (in % of DE)")
-plot_heads_and_models(tensors_to_load["condensed_percent_LN_of_DE"], title = "Self-Repair from LayerNorm (in % of DE)", y_axis_title = "Self-Repair from LayerNorm (in % of DE)", rescaled_x=True)
+fig = plot_heads_and_models(tensors_to_load["condensed_percent_LN_of_DE"], title = "Self-Repair from LayerNorm (in % of DE)", y_axis_title = "Self-Repair from LayerNorm (in % of DE)", rescaled_x=True)
+fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + "self_repair_LN_comparison.pdf")
 # %% Now plot for MLP erasure
 #plot_heads_and_models(tensors_to_load["condensed_self_repair_from_layers"], title = "Self-Repair from MLP Erasure (in Logits)", y_axis_title = "Self-Repair from MLP Erasure (in Logits)")
-plot_heads_and_models(tensors_to_load["condensed_percent_layers_of_DE"], title = "Self-Repair from MLP Erasure (in % of DE)", y_axis_title = "Self-Repair from MLP Erasure (in % of DE)", rescaled_x=True)
-
+fig = plot_heads_and_models(tensors_to_load["condensed_percent_layers_of_DE"], title = "Self-Repair from MLP Erasure (in % of DE)", y_axis_title = "Self-Repair from MLP Erasure (in % of DE)", rescaled_x=True)
+fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + "self_repair_MLP_comparison.pdf")
     #self_repair_percentage_per_layer_per_model.append(data.mean(axis=1))
 # %% Using plotly, graph the self-repair percentage per layer per model
 
