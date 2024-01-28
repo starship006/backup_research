@@ -18,7 +18,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 in_notebook_mode = is_notebook()
 
 if in_notebook_mode:
-    model_name = "pythia-160m"#""####
+    model_name = "gpt2-small"#""####
     BATCH_SIZE = 20
     #ablation_type = "sample" 
 else:
@@ -132,11 +132,11 @@ def new_ld_upon_sample_ablation_calc(logits, clean_tokens, corrupted_tokens, cle
 
 
 # %% Generate data
-TOTAL_TOKENS = ((100_000 // (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
+TOTAL_TOKENS = ((1_000_000 // (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
 dataset, num_batches = prepare_dataset(model, device, TOTAL_TOKENS, BATCH_SIZE, PROMPT_LEN, False, "pile")
 
 layer = model.cfg.n_layers - 1 # constant for now
-head = 2# constant for now
+head = 11# constant for now : 2 was main 
 
 ablation_types = ["sample", "mean", "zero"]
 
@@ -174,7 +174,7 @@ for batch_idx, clean_tokens, corrupted_tokens in dataset:
         clean_ln_scale[i, batch_idx] = cache['ln_final.hook_scale'][..., 0]
         ablated_ln_scale[i, batch_idx] = avg_new_LN_scale
         
-        pbar.update(1)
+    pbar.update(1)
     
 pbar.close()
 
@@ -275,10 +275,11 @@ def filter_top_percentile(x_data, y_data, color_data, percentile = 10, filter_fo
 
 # print("Mean: ", (y_data_filtered / x_data_filtered).mean())
 # # %% 
-clean_ln_scale_flat = clean_ln_scale[:, :, :-1].flatten(-3,-1).cpu()
-ablated_ln_scale_flat = ablated_ln_scale[:, :, :-1].flatten(-3,-1).cpu()
+clean_ln_scale_flat = clean_ln_scale[..., :-1].flatten(-3,-1).cpu()
+ablated_ln_scale_flat = ablated_ln_scale[..., :-1].flatten(-3,-1).cpu()
 color_data = head_direct_effects.flatten(-3,-1).cpu()
 
+assert clean_ln_scale_flat.shape == ablated_ln_scale_flat.shape == color_data.shape
 # assert clean_ln_scale_flat.shape == ablated_ln_scale_flat.shape == color_data.shape
 # # %%
 # # Create Scatter plot plus y=x line
@@ -313,15 +314,15 @@ color_data = head_direct_effects.flatten(-3,-1).cpu()
 # if in_notebook_mode:
 #     fig.show()
 # %%
-box_size = 0.0001  # Set the desired size of each histogram bin here
+  # Set the desired size of each histogram bin here
 
-def plot_graph(cleans, ablateds):
+def plot_graph(cleans, ablateds, box_size = 0.0001):
     fig = go.Figure()
     for i, ablation_type in enumerate(ablation_types):
         ratio_trace = go.Histogram(
             x=cleans[i] / ablateds[i],
-            name=f'Clean to Ablated LN Scale Ratio | {ablation_type}',
-            opacity=0.7,  # Adjust the opacity as needed (0.0 to 1.0)
+            name=f'{ablation_type}',
+            opacity=0.6,  # Adjust the opacity as needed (0.0 to 1.0)
             xbins=dict(size = box_size)
         )
         
@@ -329,85 +330,103 @@ def plot_graph(cleans, ablateds):
         
     layout = go.Layout(
         title='Histogram of the ratio of Clean to Ablated LN Scale Ratio',
-        xaxis=dict(title='Values'),
+        xaxis=dict(title='Clean to Ablated LN Scale Ratio'),
         yaxis=dict(title='Frequency'),
-        barmode='overlay'
+        barmode='overlay',
+        width=700,
+        
+        font=dict(
+            size=16,
+        )
     )
 
     fig.update_layout(layout)
+    
+    fig.add_shape(
+        go.layout.Shape(
+            type="line",
+            x0=1,
+            x1=1,
+            y0=0,
+            y1=1100,
+            line=dict(color="black", dash="dash")
+        )
+    )
         
-    fig.show()
+    return fig
     
 # %%
 plot_graph(clean_ln_scale_flat, ablated_ln_scale_flat)
     
+
+# %%
+#fig.write_image(f"figures/LN_graphs/{safe_model_name}_L{layer}H{head}_everything_.pdf")
+for i in range(len(ablation_types)):
+    print(f"Percent above 1: ", (clean_ln_scale_flat[i] / ablated_ln_scale_flat[i] > 1).sum() / len(clean_ln_scale_flat[i]))
+
+
+
+# %% FILTERED vrsion
+filter_percentile = 2
+clean_ln_scale_flat_filtered = []
+ablated_ln_filtered = []
+
+for i in range(len(ablation_types)):
+    a, b = filter_top_percentile(clean_ln_scale_flat[i], ablated_ln_scale_flat[i], color_data[i], percentile=filter_percentile, filter_for_only_positive_ratio = False)
+    clean_ln_scale_flat_filtered.append(a)
+    ablated_ln_filtered.append(b)
+    
+    
+clean_ln_scale_flat_filtered = torch.stack(clean_ln_scale_flat_filtered)
+ablated_ln_filtered = torch.stack(ablated_ln_filtered)
+# %%
+fig = plot_graph(clean_ln_scale_flat_filtered, ablated_ln_filtered, box_size = 0.0005)
+fig.show()
+fig.write_image(f"figures/LN_graphs/{safe_model_name}_L{layer}H{head}_top{filter_percentile}_percentile_LINE_.pdf")
+# %%
+
+for i in range(len(ablation_types)):
+    print(f"Percent above 1: ", (clean_ln_scale_flat_filtered[i] / ablated_ln_filtered[i] > 1).sum() / len(clean_ln_scale_flat_filtered[i]))
+
+
+
+
+# %%
+# filter_top_percentile(clean_ln_scale_flat, ablated_ln_scale_flat, color_data, percentile=filter_percentile, filter_for_only_positive_ratio = False)
+# ratio_trace = go.Histogram(x=clean_ln_scale_flat_filtered / ablated_ln_filtered, name='Clean to Ablated LN Scale Ratio', opacity=1)
+
+# # Create layout
+# layout = go.Layout(title=f"Clean to Ablated LN Scale Ratio, on top {filter_percentile}% of {safe_model_name} L{layer}H{head} Direct Effect",
+#                    xaxis=dict(title='Values'),
+#                    yaxis=dict(title='Frequency'),
+#                    barmode='overlay' )
+
+
+# # Create figure
+# fig = go.Figure(data=[ratio_trace], layout=layout)
+
+
+# # Show the figure
+# if in_notebook_mode:
+#     fig.show()
+    
+    
+# print(f"Percent above 1: ", (clean_ln_scale_flat_filtered / ablated_ln_filtered > 1).sum() / len(clean_ln_scale_flat_filtered))
+# fig.write_image(f"figures/LN_graphs/{safe_model_name}_L{layer}H{head}_top{filter_percentile}_percentile_.pdf")
+# # %%
+
+
 # fig.add_shape(
 #     go.layout.Shape(
 #         type="line",
 #         x0=1,
 #         x1=1,
 #         y0=0,
-#         y1=5000,
+#         y1=len(clean_ln_scale_flat_filtered) / 20,
 #         line=dict(color="black", dash="dash")
 #     )
 # )
-# %%
-#fig.write_image(f"figures/LN_graphs/{safe_model_name}_L{layer}H{head}_everything_.pdf")
-print(f"Percent above 1: ", (clean_ln_scale_flat / ablated_ln_scale_flat > 1).sum() / len(clean_ln_scale_flat))
-
-
-
-# %% FILTERED vrsion
-filter_percentile = 2
-clean_ln_scale_flat_filtered = torch.zeros((len(ablation_type), int(clean_ln_scale_flat.shape[1] * filter_percentile / 100)))
-ablated_ln_filtered = torch.zeros((len(ablation_type), int(clean_ln_scale_flat.shape[1] * filter_percentile / 100)))
-
-for i in range(len(ablation_types)):
-    
-    a, b = filter_top_percentile(clean_ln_scale_flat[i], ablated_ln_scale_flat[i], color_data[i], percentile=filter_percentile, filter_for_only_positive_ratio = False)
-    clean_ln_scale_flat_filtered[i] = a
-    ablated_ln_filtered[i] = b
-# %%
-plot_graph(clean_ln_scale_flat_filtered, ablated_ln_filtered)
-
-
-
-# %%
-filter_top_percentile(clean_ln_scale_flat, ablated_ln_scale_flat, color_data, percentile=filter_percentile, filter_for_only_positive_ratio = False)
-ratio_trace = go.Histogram(x=clean_ln_scale_flat_filtered / ablated_ln_filtered, name='Clean to Ablated LN Scale Ratio', opacity=1)
-
-# Create layout
-layout = go.Layout(title=f"Clean to Ablated LN Scale Ratio, on top {filter_percentile}% of {safe_model_name} L{layer}H{head} Direct Effect",
-                   xaxis=dict(title='Values'),
-                   yaxis=dict(title='Frequency'),
-                   barmode='overlay' )
-
-
-# Create figure
-fig = go.Figure(data=[ratio_trace], layout=layout)
-
-
-# Show the figure
-if in_notebook_mode:
-    fig.show()
-    
-    
-print(f"Percent above 1: ", (clean_ln_scale_flat_filtered / ablated_ln_filtered > 1).sum() / len(clean_ln_scale_flat_filtered))
-fig.write_image(f"figures/LN_graphs/{safe_model_name}_L{layer}H{head}_top{filter_percentile}_percentile_.pdf")
-# %%
-
-
-fig.add_shape(
-    go.layout.Shape(
-        type="line",
-        x0=1,
-        x1=1,
-        y0=0,
-        y1=len(clean_ln_scale_flat_filtered) / 20,
-        line=dict(color="black", dash="dash")
-    )
-)
-if in_notebook_mode:
-    fig.show()
-fig.write_image(f"figures/LN_graphs/{safe_model_name}_L{layer}H{head}_top{filter_percentile}_percentile_LINE_.pdf")
-# %%
+# if in_notebook_mode:
+#     fig.show()
+# fig.write_image(f"figures/LN_graphs/{safe_model_name}_L{layer}H{head}_top{filter_percentile}_percentile_LINE_.pdf")
+# # %%

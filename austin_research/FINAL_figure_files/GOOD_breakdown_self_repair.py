@@ -19,18 +19,23 @@ FOLDER_TO_STORE_PICKLES = "pickle_storage/breakdown_self_repair/"
 
 if in_notebook_mode:
     model_name = "pythia-160m"
-    BATCH_SIZE = 30
+    BATCH_SIZE = 2
     PERCENTILE = 0.02
+    MIN_TOKENS = 1_000
 else:
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='gpt2-small')
     parser.add_argument('--batch_size', type=int, default=30)  
     parser.add_argument('--percentile', type=float, default=0.02)
+    parser.add_argument('--min_tokens', type=int, default=100_000)
     args = parser.parse_args()
     
     model_name = args.model_name
     BATCH_SIZE = args.batch_size
     PERCENTILE = args.percentile
+    MIN_TOKENS = args.min_tokens
+    
+    
 
 
 # %%
@@ -108,7 +113,7 @@ def ablate_top_instances_and_get_breakdown(head: tuple, clean_tokens: Tensor, co
         
 # %% We need to iterate through the dataset to find the 
 PROMPT_LEN = 128
-TOTAL_TOKENS = ((100_000 // (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
+TOTAL_TOKENS = ((MIN_TOKENS // (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
 
 
 dataset, num_batches = prepare_dataset(model, device, TOTAL_TOKENS, BATCH_SIZE, PROMPT_LEN, False, "pile")
@@ -126,6 +131,11 @@ percent_LN_of_DE = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1,
 percent_heads_of_DE = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
 percent_layers_of_DE = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
 percent_self_repair_of_DE = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
+
+unclipped_percent_LN_of_DE = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
+unclipped_percent_heads_of_DE = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
+unclipped_percent_layers_of_DE = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
+unclipped_percent_self_repair_of_DE = torch.zeros(TOTAL_PROMPTS_TO_ITERATE_THROUGH, PROMPT_LEN - 1, model.cfg.n_layers, model.cfg.n_heads)
 
 # %%
 pbar = tqdm(total=num_batches, desc='Processing batches')
@@ -155,11 +165,15 @@ for batch_idx, clean_tokens, corrupted_tokens in dataset:
             percent_layers_of_DE[start_clean_prompt:end_clean_prompt, :, layer, head] = np.clip((self_repair_from_layers / direct_effects).cpu(), 0, 1)
             percent_self_repair_of_DE[start_clean_prompt:end_clean_prompt, :, layer, head] = np.clip((self_repair / direct_effects).cpu(), 0, 1)
             
+            unclipped_percent_LN_of_DE[start_clean_prompt:end_clean_prompt, :, layer, head] = (self_repair_from_LN / direct_effects).cpu()
+            unclipped_percent_heads_of_DE[start_clean_prompt:end_clean_prompt, :, layer, head] = (self_repair_from_heads / direct_effects).cpu()
+            unclipped_percent_layers_of_DE[start_clean_prompt:end_clean_prompt, :, layer, head] = (self_repair_from_layers / direct_effects).cpu()
+            unclipped_percent_self_repair_of_DE[start_clean_prompt:end_clean_prompt, :, layer, head] = (self_repair / direct_effects).cpu()
+            
     pbar.update(1)
         
 # %%
 num_top_instances = int(PERCENTILE * TOTAL_PROMPTS_TO_ITERATE_THROUGH * (PROMPT_LEN - 1))
-
 
 condensed_logit_diff = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
 condensed_direct_effects = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
@@ -172,7 +186,6 @@ condensed_percent_LN_of_DE = torch.zeros((model.cfg.n_layers, model.cfg.n_heads)
 condensed_percent_heads_of_DE = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
 condensed_percent_layers_of_DE = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
 condensed_percent_self_repair_of_DE = torch.zeros((model.cfg.n_layers, model.cfg.n_heads))
-
 
 
 for layer in tqdm(range(model.cfg.n_layers)):
@@ -193,8 +206,26 @@ for layer in tqdm(range(model.cfg.n_layers)):
         condensed_percent_layers_of_DE[layer, head] = torch.stack([percent_layers_of_DE[batch, pos, layer, head] for batch, pos in top_indices]).nanmean()
         condensed_percent_self_repair_of_DE[layer, head] = torch.stack([percent_self_repair_of_DE[batch, pos, layer, head] for batch, pos in top_indices]).nanmean()
         
-        
+
+# do unfiltered, too        
+full_logit_diff = logit_diffs_across_everything.mean((0, 1))
+full_direct_effects = direct_effects_across_everything.mean((0, 1))
+full_ablated_direct_effects = ablated_direct_effects_across_everything.mean((0, 1))
+full_self_repair_from_heads = self_repair_from_heads_across_everything.mean((0, 1))
+full_self_repair_from_layers = self_repair_from_layers_across_everything.mean((0, 1))
+full_self_repair_from_LN = self_repair_from_LN_across_everything.mean((0, 1))
+
+full_percent_LN_of_DE = percent_LN_of_DE.nanmean((0, 1))
+full_percent_heads_of_DE = percent_heads_of_DE.nanmean((0, 1))
+full_percent_layers_of_DE = percent_layers_of_DE.nanmean((0, 1))
 full_percent_self_repair_of_DE = percent_self_repair_of_DE.nanmean((0, 1))
+
+full_unclipped_percent_LN_of_DE = unclipped_percent_LN_of_DE.nanmean((0, 1))
+full_unclipped_percent_heads_of_DE = unclipped_percent_heads_of_DE.nanmean((0, 1))
+full_unclipped_percent_layers_of_DE = unclipped_percent_layers_of_DE.nanmean((0, 1))
+full_unclipped_percent_self_repair_of_DE = unclipped_percent_self_repair_of_DE.nanmean((0, 1))
+
+
 # %% Save the data to pickle
 tensors_to_save = {
     "condensed_logit_diff": condensed_logit_diff,
@@ -203,11 +234,28 @@ tensors_to_save = {
     "condensed_self_repair_from_heads": condensed_self_repair_from_heads,
     "condensed_self_repair_from_layers": condensed_self_repair_from_layers,
     "condensed_self_repair_from_LN": condensed_self_repair_from_LN,
+    
     "condensed_percent_LN_of_DE": condensed_percent_LN_of_DE,
     "condensed_percent_heads_of_DE": condensed_percent_heads_of_DE,
     "condensed_percent_layers_of_DE": condensed_percent_layers_of_DE,
     "condensed_percent_self_repair_of_DE": condensed_percent_self_repair_of_DE,
+    
+    "full_logit_diff": full_logit_diff,
+    "full_direct_effects": full_direct_effects,
+    "full_ablated_direct_effects": full_ablated_direct_effects,
+    "full_self_repair_from_heads": full_self_repair_from_heads,
+    "full_self_repair_from_layers": full_self_repair_from_layers,
+    "full_self_repair_from_LN": full_self_repair_from_LN,
+    
+    "full_percent_LN_of_DE": full_percent_LN_of_DE,
+    "full_percent_heads_of_DE": full_percent_heads_of_DE,
+    "full_percent_layers_of_DE": full_percent_layers_of_DE,
     "full_percent_self_repair_of_DE": full_percent_self_repair_of_DE,
+    
+    "full_unclipped_percent_LN_of_DE": full_unclipped_percent_LN_of_DE,
+    "full_unclipped_percent_heads_of_DE": full_unclipped_percent_heads_of_DE,
+    "full_unclipped_percent_layers_of_DE": full_unclipped_percent_layers_of_DE,
+    "full_unclipped_percent_self_repair_of_DE": full_unclipped_percent_self_repair_of_DE,
 }
 
 percentile_str = "" if PERCENTILE == 0.02 else f"{PERCENTILE}_" # 0.02 is the default

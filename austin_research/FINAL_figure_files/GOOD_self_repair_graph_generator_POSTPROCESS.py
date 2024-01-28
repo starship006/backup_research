@@ -13,7 +13,7 @@ FOLDER_TO_STORE_PICKLES = "pickle_storage/new_graph_pickle/"
 PADDING = False
 
 if in_notebook_mode:
-    model_name = "llama-7b"#"pythia-160m"####
+    model_name = "pythia-1b"#"pythia-160m"####
     BATCH_SIZE = 2
     ABLATION_TYPE = "sample" 
 else:
@@ -72,21 +72,36 @@ with open(FOLDER_TO_STORE_PICKLES + type_modifier + f"{safe_model_name}_threshol
 layers, heads = thresholded_de.shape
 assert thresholded_de.shape == thresholded_cil.shape == thresholded_count.shape
 # %%
-fig = create_layered_scatter(thresholded_de, thresholded_cil, model, "Direct Effect of Component", "Change in Logits Upon Ablation", f"Effect of {ablation_str}-Ablating Attention Heads in {model_name}")
+fig = create_layered_scatter(thresholded_de, thresholded_cil, model, "Direct Effect of Component", "Change in Logits Upon Ablation","" )# NO TITLE: f"Effect of {ablation_str}-Ablating Attention Heads in {model_name}")
 
 fig.add_trace(go.Scatter(x=[min(fig.data[0]['x']) - 0.05, max(fig.data[0]['x']) + 0.05],
                        y=[-min(fig.data[0]['x']) + 0.05, -max(fig.data[0]['x']) - 0.05],
                        mode='lines',
                        name='y=-x Line',
-                       line=dict(color='blue', dash='dot'),
+                       line=dict(color='grey', dash='dash'),
                        ))
 # %%
+
+x_range = [-1, 1]
+y_range = [-1.2, 0.2]
+if model_name == "pythia-410m":
+    x_range = [-0.2, 0.2]
+    y_range = [-1.2, 0.2]
+elif model_name == "llama-7b":
+    x_range = [min(fig.data[0]['x']) - 0.05, 0.5]
+    y_range = [-0.3, 0.5]
+elif model_name == "pythia-1b":
+    x_range = [-0.2, 0.4]
+    y_range =  [-0.7, 0.2]
+
 fig.update_xaxes(
    showline=True,
    showticklabels=True,
    zeroline=True,
    zerolinecolor='black',
-   showgrid=False
+   showgrid=False,
+   range=x_range,  
+   linecolor = 'black'
 )
 
 fig.update_yaxes(
@@ -94,12 +109,14 @@ fig.update_yaxes(
    showticklabels=True,
    zeroline=True,
    zerolinecolor='black',
-   showgrid=False
+   showgrid=False,
+   range=y_range,
+   linecolor = 'black'
 )
 fig.update_layout(
    autosize=False,
-   #width=500,
-   #height=500,
+   width=500,
+   height=700,
    margin=dict(
        l=50,
        r=50,
@@ -107,22 +124,22 @@ fig.update_layout(
        t=100,
        pad=4
    ),
-   showlegend=True
+   showlegend=False,
    #paper_bgcolor="rgba(0,0,0,0)",
-   #plot_bgcolor="rgba(0,0,0,0)"
-)
+   plot_bgcolor="rgba(0,0,0,0)",
+    )
 
-# Add annotation for 'self-repair' zone
-fig.add_annotation(
-   x=(min(fig.data[0]['x']) + max(fig.data[0]['x'])) / 2 + 0.2, # middle of x range
-   y=(-min(fig.data[0]['x']) + 0.05) / 2 - 0.2, # middle of y range
-   text="Self-repair Zone",
-   showarrow=False,
-   font=dict(size=10, color="black"),
-   align="center",
-   ax=0,
-   ay=-30,
-)
+# # Add annotation for 'self-repair' zone
+# fig.add_annotation(
+#    x=(min(fig.data[0]['x']) + max(fig.data[0]['x'])) / 2 + 0.14, # middle of x range
+#    y=(-min(fig.data[0]['x']) + 0.05) / 2 - 0.2, # middle of y range
+#    text="Self-repair Zone",
+#    showarrow=False,
+#    font=dict(size=10, color="black"),
+#    align="center",
+#    ax=0,
+#    ay=-30,
+# )
 
 
 fig.show()
@@ -130,5 +147,20 @@ fig.show()
 
 fig.write_html(FOLDER_TO_WRITE_GRAPHS_TO + f"simple_plot_graphs/{ablation_str}_{safe_model_name}_de_vs_cre.html")
 fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + f"simple_plot_graphs/{ablation_str}_{safe_model_name}_de_vs_cre.pdf")
+# %%
+
+# fig.update_yaxes(
+#    range=[-0.3, 0.1],
+# )
+
+fig.update_layout(
+   autosize=False,
+   width=450,
+   height=500,)
+
+
+fig.show()
+
+fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + f"simple_plot_graphs/COMPRESSED_{ablation_str}_{safe_model_name}_de_vs_cre.pdf")
 
 # %%
