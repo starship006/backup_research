@@ -173,7 +173,7 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
 
 # %% Next: A few neurons is often enough to explain the self-repair on a prompt
 
-x_neurons = 10 # how many neurons to filter for
+x_neurons = 5 # how many neurons to filter for
 traces = [] # initialize an empty list to store the histogram traces
 cap_amount = 300 # top percentile to bound at
 
@@ -241,7 +241,7 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
     num_prompts_to_consider = int(num_prompts * prompt_len_minus_one * PERCENTILE)
     print("Considering top", num_prompts_to_consider, "prompts")
 
-    for head in range(model.cfg.n_heads):
+    for head in [11]:#range(model.cfg.n_heads):
         clean_direct_effect = torch.zeros(num_prompts_to_consider) # DE of top self-repair neuron on clean
         corrupted_direct_effect = torch.zeros(num_prompts_to_consider) # DE of top self-repair neuron on corrupted
         layer_direct_effect = torch.zeros(num_prompts_to_consider) # DE of entire layer on corrupted
@@ -256,12 +256,13 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
             corrupted_direct_effect[i] = top_neurons_self_repair[batch, pos, 0] + top_neuron_initial_vals[head, batch, pos, 0] # self_repair = corrupted - clean
             layer_direct_effect[i] = direct_effects_from_layers_across_everything[-1, batch, pos]
         
-        fig = px.scatter(x = clean_direct_effect, y = corrupted_direct_effect, color = layer_direct_effect, title = "L" + str(ablate_layer) + "H" + str(head))
+        fig = px.scatter(x = clean_direct_effect, y = corrupted_direct_effect, color = layer_direct_effect)#, title = "L" + str(ablate_layer) + "H" + str(head))
         
-        fig.add_trace(go.Scatter(x=[min(clean_direct_effect), max(clean_direct_effect)], y=[min(clean_direct_effect), max(clean_direct_effect)], mode='lines', name='y=x', line=dict(color='darkgray')))
+        fig.add_trace(go.Scatter(x=[min(clean_direct_effect), max(clean_direct_effect)], y=[min(clean_direct_effect), max(clean_direct_effect)], 
+                                 mode='lines', name='y=x', line=dict(color='black', dash = 'dash')))
         fig.update_traces(marker_size=2)
         fig.update_layout(
-            title=f'Clean/Ablated Direct Effects of top Self-Repairing Neuron when ablating L{ablate_layer}H{head} in {safe_model_name}'+ ' | Top ' + str(PERCENTILE * 100) + '%',
+            #title=f'Clean/Ablated Direct Effects of top Self-Repairing Neuron when ablating L{ablate_layer}H{head} in {safe_model_name}'+ ' | Top ' + str(PERCENTILE * 100) + '%',
             xaxis_title='Clean Direct Effect',
             yaxis_title='Ablated Direct Effect',
             coloraxis=dict(
@@ -279,10 +280,13 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
         fig.update_layout(coloraxis_colorbar=dict(yanchor="top", y=1, x=-0.2,
                                           ticks="outside", title = "Last MLP DE"))
         
-        range_size = 5.5       
+        range_size = 4.5
         fig.update_layout(
             xaxis=dict(range=[-range_size,range_size]),
-            yaxis=dict(range=[-range_size,range_size])
+            yaxis=dict(range=[-range_size,range_size]),
+            plot_bgcolor='white',
+            showlegend = False
+
         )
         
         
@@ -290,7 +294,12 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
             width = 1000,
             height = 500,
         )
+        
+        fig.update_xaxes(linecolor = 'Black',  zeroline=True, zerolinecolor='black',)
+        fig.update_yaxes(linecolor = 'Black',  zeroline=True, zerolinecolor='black',)
         fig.show()
+        
+        
 # %%
 fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + f"erasure_neuron/{safe_model_name}_L{ablate_layer}H{11}_{PERCENTILE}.pdf")    
 
@@ -301,7 +310,7 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
     num_prompts_to_consider = int(num_prompts * prompt_len_minus_one * PERCENTILE)
     print("Considering top", num_prompts_to_consider, "prompts")
     print("BRUH YOU SHOULD CHANGE TITLE")
-    for head in range(model.cfg.n_heads):
+    for head in [11]:#range(model.cfg.n_heads):
         clean_direct_effect = torch.zeros(num_prompts_to_consider) # DE of top self-repair neuron on clean
         corrupted_direct_effect = torch.zeros(num_prompts_to_consider) # DE of top self-repair neuron on corrupted
         
@@ -311,7 +320,7 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
         all_counts = [0 for _ in range(model.cfg.d_mlp)]
         for batch, pos in filtered_batch_pos:
             for neuron in top_neurons_idx[head, batch, pos, 0:top_x_neurons]:
-                all_counts[neuron] += 1
+                all_counts[int(neuron.item())] += 1
 
         # Sort neurons by count
         sorted_neurons = sorted(range(len(all_counts)), key=all_counts.__getitem__, reverse=True)
@@ -320,7 +329,7 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
         
         percents_to_plot = [neuron_tuple[1] for neuron_tuple in sorted_neurons_with_percents]
 
-        fig = px.bar(x = list(range(len(sorted_neurons))), y = percents_to_plot,  title = "Neuron Self-Repair when ablating L" + str(ablate_layer) + "H" + str(head) + f" in {safe_model_name}")
+        fig = px.bar(x = list(range(len(sorted_neurons))), y = percents_to_plot)#,  title = "Neuron Self-Repair when ablating L" + str(ablate_layer) + "H" + str(head) + f" in {safe_model_name}")
         fig.update_traces(hovertext=[str(neuron) for neuron in sorted_neurons], hoverinfo='text')
         fig.update_yaxes(title = "Percentage of Prompts with Neuron in Top " + str(top_x_neurons))
         
@@ -330,5 +339,69 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
         # dont show x axis label
         fig.update_xaxes(showticklabels=False, title = "Different Neurons")
         fig.show()
+
+# %% LOAD THE SPARSITY STUFF
+
+
+
+# %% SAVE THESE TENSORS:
+
+tensors_to_load = {
+    "llama-7b/MLPs_is_larger_tensors_llama-7b_L30_H31.pickle",
+    "gpt2-small/MLPs_is_larger_tensors_gpt2-small_L10_H11.pickle",
+    "pythia-160m/MLPs_is_larger_tensors_pythia-160m_L10_H9.pickle",
+    "pythia-410m/MLPs_is_larger_tensors_pythia-410m_L20_H15.pickle",
+}
+
+tensor_names = {
+    "llama_is_larger" ,
+    "gpt2-small_is_larger",
+    "pythia-160m_is_larger",
+    "pythia-410m_is_larger",
+}
+
+all_is_larger_tensors = []
+# %%
+FOLDER_TO_STORE_PICKLES = "pickle_storage/mlp_sparsity/"
+subfolder_path = Path(FOLDER_TO_STORE_PICKLES)
+
+for tensor_name in tensors_to_load:
+    file_path = subfolder_path / tensor_name
+    with open(file_path, "rb") as f:
+        a = pickle.load(f)   
+        all_is_larger_tensors.append(a)
+        
+# %%
+model_names = ["Llama-7b L30H31", "GPT2-Small L10H11", "Pythia-160m L10H9", "Pythia-410m L20H15"]
+percentages = [0.5, 0.1, 0.05, 0.025, 0.01]
+fig = make_subplots(rows = 2, cols = 2,  vertical_spacing=0.1, horizontal_spacing=0.1, subplot_titles=model_names)
+colors = ["#EDBFC6", "#66D9D7", "#678FBF", "#465DA3", "#192A5E"]
+
+
+for model_index, is_larger_tensors in enumerate(all_is_larger_tensors):
+    
+    for i, is_larger_tensor in enumerate(is_larger_tensors):
+        fig.add_trace(go.Scatter(x=np.arange(1, is_larger_tensor.shape[0]),
+                             y=is_larger_tensor,
+                             mode='lines+markers',
+                             name=f"{percentages[i] * 100}%",
+                             marker=dict(color=colors[i])
+                        ), row = model_index // 2 + 1, col = model_index % 2 + 1)
+
+
+    fig.update_layout(
+        height=800,
+        width=1000,
+        margin=dict(l=50, r=50, t=50, b=50),
+        plot_bgcolor='white',
+    )
+    fig.update_xaxes(range=[0, 50], title_text = "Top Nth Neuron", linecolor="Black")
+    fig.update_yaxes(title_text = "% of instances", tickformat=".0%", linecolor="Black", gridcolor="grey")
+
+if in_notebook_mode:
+    fig.show()
+
+# %%
+fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + f"top_neuron_explains_instances_combined.pdf")
 
 # %%

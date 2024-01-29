@@ -202,8 +202,8 @@ fig = plot_heads_and_models(full_self_repair_as_logits, title = "Self-Repair (as
 fig = plot_heads_and_models(condensed_self_repair_as_logits, title = "",
                       y_axis_title = "Self-Repair (as logits)", x_axis_title= "%th Layer in Model", rescaled_x=True, y_percentage=False, y_range=[-1, 1.75])
 
-fig.add_annotation(x=.2, y=0.2, text="Early-Layer Breakage", font=dict(color="red"), xref="paper", yref="paper", showarrow=False)
-fig.add_annotation(x=.8, y=.95, text="Self-Repairing", font=dict(color="#007BFF"), xref="paper", yref="paper", showarrow = False)#fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + "self_repair_full_comparison_logits.pdf")
+fig.add_annotation(x=.2, y=0.2, text="Early-Layer Breakage", font=dict(color="red", size = 20), xref="paper", yref="paper", showarrow=False)
+fig.add_annotation(x=.8, y=.8, text="Self-Repairing Behavior", font=dict(color="#007BFF", size = 20), xref="paper", yref="paper", showarrow = False)#fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + "self_repair_full_comparison_logits.pdf")
 
 fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + "condensed_self_repair_as_logits_GRAPH.pdf")
 
