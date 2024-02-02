@@ -347,10 +347,10 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
 # %% SAVE THESE TENSORS:
 
 tensors_to_load = {
-    "llama-7b/MLPs_is_larger_tensors_llama-7b_L30_H31.pickle",
-    "gpt2-small/MLPs_is_larger_tensors_gpt2-small_L10_H11.pickle",
-    "pythia-160m/MLPs_is_larger_tensors_pythia-160m_L10_H9.pickle",
-    "pythia-410m/MLPs_is_larger_tensors_pythia-410m_L20_H15.pickle",
+    "llama-7b/MLPs_is_larger_tensors_llama-7b_L30_H8.pickle",
+    "gpt2-small/MLPs_is_larger_tensors_gpt2-small_L10_H2.pickle",
+    "pythia-160m/MLPs_is_larger_tensors_pythia-160m_L9_H3.pickle",
+    "pythia-410m/MLPs_is_larger_tensors_pythia-410m_L20_H6.pickle",
 }
 
 tensor_names = {
@@ -372,9 +372,9 @@ for tensor_name in tensors_to_load:
         all_is_larger_tensors.append(a)
         
 # %%
-model_names = ["Llama-7b L30H31", "GPT2-Small L10H11", "Pythia-160m L10H9", "Pythia-410m L20H15"]
+model_names = ["Llama-7b L30H8", "GPT-2 Small L10H2", "Pythia-160m L9H3", "Pythia-410m L20H6"]
 percentages = [0.5, 0.1, 0.05, 0.025, 0.01]
-fig = make_subplots(rows = 2, cols = 2,  vertical_spacing=0.1, horizontal_spacing=0.1, subplot_titles=model_names)
+fig = make_subplots(rows = 2, cols = 2,  vertical_spacing=0.125, horizontal_spacing=0.1, subplot_titles=model_names)
 colors = ["#EDBFC6", "#66D9D7", "#678FBF", "#465DA3", "#192A5E"]
 
 

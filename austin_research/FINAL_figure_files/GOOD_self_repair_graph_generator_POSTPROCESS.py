@@ -13,7 +13,7 @@ FOLDER_TO_STORE_PICKLES = "pickle_storage/new_graph_pickle/"
 PADDING = False
 
 if in_notebook_mode:
-    model_name = "pythia-1b"#"pythia-160m"####
+    model_name = "gpt2-large"#"pythia-160m"####
     BATCH_SIZE = 2
     ABLATION_TYPE = "sample" 
 else:
@@ -156,8 +156,44 @@ fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + f"simple_plot_graphs/{ablation_str}_
 fig.update_layout(
    autosize=False,
    width=450,
-   height=500,)
+   height=550,)
+if False:
+    fig.update_yaxes(range = [-0.5, 0.1])
 
+    fig.add_annotation(
+        x=0.3, # middle of x range
+        y=-0.06, # middle of y range
+        text="Self-Repaired",
+        showarrow=False,
+        font=dict(size=11.5, color="black"),
+        align="center",
+        ax=0,
+        ay=-30,
+        )
+
+    fig.add_annotation(
+        x=0.25,               # middle of x range
+        y=-0.225,              # middle of y range
+        text="No Self-Repair",
+        showarrow=False,
+        font=dict(size=11.5, color="black"),
+        align="center",
+        ax=0,
+        ay=-30,
+        textangle = 45,            # Set the angle to -45 degrees for left orientation
+    )
+
+    fig.add_annotation(
+        x=0.17,               # middle of x range
+        y=-0.35,              # middle of y range
+        text="Breakage",
+        showarrow=False,
+        font=dict(size=11.5, color="black"),
+        align="center",
+        ax=0,
+        ay=-30,
+        textangle = 0,            # Set the angle to -45 degrees for left orientation
+    )
 
 fig.show()
 

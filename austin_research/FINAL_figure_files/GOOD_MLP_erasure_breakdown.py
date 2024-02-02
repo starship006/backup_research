@@ -340,7 +340,7 @@ subfolder_path.mkdir(parents=True, exist_ok=True)  # This creates the subfolder 
 
 # Loop through the dictionary and save each tensor
 for tensor_name, tensor_data in tensors_to_save.items():
-    file_path = subfolder_path / f"MLPs_{tensor_name}_{safe_model_name}_L{ablate_layer}_H{head}.pickle"
+    file_path = subfolder_path / f"MLPs_{tensor_name}_{safe_model_name}_L{ablate_layer}_H{ABLATE_HEAD}.pickle"
     with open(file_path, "wb") as f:
         pickle.dump(tensor_data, f)
 

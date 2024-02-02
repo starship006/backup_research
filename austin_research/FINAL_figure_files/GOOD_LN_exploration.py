@@ -19,7 +19,7 @@ in_notebook_mode = is_notebook()
 
 if in_notebook_mode:
     model_name = "gpt2-small"#""####
-    BATCH_SIZE = 20
+    BATCH_SIZE = 12
     #ablation_type = "sample" 
 else:
     parser = argparse.ArgumentParser()
@@ -182,6 +182,7 @@ pbar.close()
 # per_head_direct_effect, all_layer_direct_effect = collect_direct_effect(cache, correct_tokens=clean_tokens, model = model, display = in_notebook_mode, collect_individual_neurons = False)
 # if in_notebook_mode:
 #     show_input(per_head_direct_effect.mean((-1,-2)), all_layer_direct_effect.mean((-1,-2)), title = "Direct Effect of Heads and MLP Layers")
+
 # %%
 def filter_top_percentile(x_data, y_data, color_data, percentile = 10, filter_for_only_positive_ratio = False):
     # Calculate the percentile'tj of color_data
@@ -316,32 +317,39 @@ assert clean_ln_scale_flat.shape == ablated_ln_scale_flat.shape == color_data.sh
 # %%
   # Set the desired size of each histogram bin here
 
-def plot_graph(cleans, ablateds, box_size = 0.0001):
+def plot_graph(cleans, ablateds, box_size=0.0001):
     fig = go.Figure()
-    for i, ablation_type in enumerate(ablation_types):
+    
+    # Define a tropical color scale
+    colors = ["#1515DC", "#FF4365", "#61D095"]
+    
+    correct_ablation_types = ['resample', 'mean', 'zero']
+    
+    for i, ablation_type in enumerate(correct_ablation_types):
         ratio_trace = go.Histogram(
             x=cleans[i] / ablateds[i],
             name=f'{ablation_type}',
             opacity=0.6,  # Adjust the opacity as needed (0.0 to 1.0)
-            xbins=dict(size = box_size)
+            xbins=dict(size=box_size),
+            marker_color=colors[i],  # Use modulo to repeat colors
         )
         
         fig.add_trace(ratio_trace)
         
     layout = go.Layout(
-        title='Histogram of the ratio of Clean to Ablated LN Scale Ratio',
+        #title='Histogram of the ratio of Clean to Ablated LN Scale Ratio',
         xaxis=dict(title='Clean to Ablated LN Scale Ratio'),
         yaxis=dict(title='Frequency'),
         barmode='overlay',
         width=700,
-        
-        font=dict(
-            size=16,
-        )
+        paper_bgcolor='white',
+        plot_bgcolor='white'
     )
 
-    fig.update_layout(layout)
+    fig.update_xaxes(linecolor='black')
+    fig.update_yaxes(linecolor='black')
     
+    fig.update_layout(layout)
     fig.add_shape(
         go.layout.Shape(
             type="line",
@@ -352,11 +360,12 @@ def plot_graph(cleans, ablateds, box_size = 0.0001):
             line=dict(color="black", dash="dash")
         )
     )
+    
         
     return fig
     
-# %%
-plot_graph(clean_ln_scale_flat, ablated_ln_scale_flat)
+# %% wait dont actually run this it takes forever unless you use a smaller batch size
+# plot_graph(clean_ln_scale_flat, ablated_ln_scale_flat)
     
 
 # %%

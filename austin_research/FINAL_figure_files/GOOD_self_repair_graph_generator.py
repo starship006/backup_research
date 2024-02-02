@@ -167,7 +167,7 @@ def get_thresholded_change_in_logits(clean_tokens, corrupted_tokens, logits: Ten
 PROMPT_LEN = 128
 
 # total tokens needs to be at least 1M, but such that it batches nicely
-TOTAL_TOKENS = ((1_000_000 // (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
+TOTAL_TOKENS = ((100_000 // (PROMPT_LEN * BATCH_SIZE)) + 1) * (PROMPT_LEN * BATCH_SIZE)
 dataset, num_batches = prepare_dataset(model, device, TOTAL_TOKENS, BATCH_SIZE, PROMPT_LEN, PADDING, "pile")
 
 # %% We filter out for specific instances where the direct effects are above a certain amount. By default, the figures in the paper don't worry about thresholds, but they are nice to have

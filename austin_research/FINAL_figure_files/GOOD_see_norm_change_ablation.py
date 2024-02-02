@@ -153,14 +153,15 @@ fig.show()
 # make histogram for direct effect vs logit diff comparison
         
 # %%
+PROPER_ABLATION_TITLES = ['mean', 'zero', 'resample']
 fig = plotly.subplots.make_subplots(
     rows=1, cols=3,
     shared_xaxes=False,
     shared_yaxes=True,
     vertical_spacing=0.25,
-    horizontal_spacing=0.15,
+    horizontal_spacing=0.05,
     #specs=[[{"type": "scatter"}] * 2]*2,
-    subplot_titles=ABLATION_TYPES,
+    subplot_titles=PROPER_ABLATION_TITLES,
 )
 colors = ['purple', 'light blue', 'pink', ]
 
@@ -168,7 +169,7 @@ for i in range(3):
     
     logit_diffs = logit_diff[:, i, :, :].flatten()
     direct_effect = direct_effects[:, i, :, :].flatten()
-    ablation = ABLATION_TYPES[i]
+    ablation = PROPER_ABLATION_TITLES[i]
 
     fig.add_trace(go.Scatter(
         x=direct_effect,
@@ -177,19 +178,36 @@ for i in range(3):
         name=ablation,
         marker=dict(size=2, color=colors[i]),
     ), row=1, col = i+1)
+    
+    
+for i in range(3):
+    # Line plot for y=-x
+    fig.add_trace(go.Scatter(
+        x=[-4, 4],  # Adjust the range as needed
+        y=[4, -4],
+        mode='lines',
+        line=dict(color='black', width=1, dash='dash'),
+        name='y=-x',
+        
+    ), row=1, col=i+1)
+    
 
+    
 
 fig.update_layout(
         title=f"Self-Repair when ablating L{layer}H{head} in {model_name}",
         xaxis_title="Direct Effect",
         yaxis_title="Logit Difference",
         # Additional layout parameters for better visualization
-        barmode='overlay'
+        barmode='overlay',
+        width = 700,
+        height = 450,
+        plot_bgcolor='white',  # Add this line to set the background color to white
     )
-fig.update_xaxes(title_text="Direct Effect", zeroline=True, zerolinecolor='black', range=[-4, 4])
-fig.update_yaxes(title_text="Logit Difference", zeroline = True, zerolinecolor='black', range=[-4, 4])
+fig.update_xaxes(title_text="Direct Effect", zeroline=True, zerolinecolor='black', range=[-4, 4], linecolor='black')
+fig.update_yaxes(title_text="Logit Difference", zeroline = True, zerolinecolor='black', range=[-4, 4], linecolor='black')
 
 fig.show()
-
+fig.write_image(f"{FOLDER_TO_WRITE_GRAPHS_TO}self_repair_ablation_L{layer}H{head}_{model_name}.pdf")
 
 # %%
