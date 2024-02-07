@@ -1,0 +1,1 @@
+this is where the figures will get populated. by default, the code will try to access folders that aren't currently here in this folder to store the files. they will need to be added in.
