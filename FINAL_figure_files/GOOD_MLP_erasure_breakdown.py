@@ -19,8 +19,8 @@ FOLDER_TO_STORE_PICKLES = "pickle_storage/mlp_sparsity/"
 if in_notebook_mode:
     model_name = "pythia-160m"
     BATCH_SIZE = 20
-    ABLATE_HEAD = 9
-    ablate_layer = 10 # second to last layer
+    ABLATE_HEAD = 8
+    ablate_layer = 7 # second to last layer
     min_tokens = 100_000
     
 else:
@@ -139,7 +139,6 @@ last_layer_ablated_neurons_across_everything = torch.zeros(model.cfg.n_heads, mo
 
 positive_changes_in_neuron_from_layer = torch.zeros(model.cfg.n_heads, num_batches, BATCH_SIZE, PROMPT_LEN - 1)
 # %%
-
 pbar = tqdm(total=num_batches, desc='Processing batches')
 ablate_head = ABLATE_HEAD
 
@@ -351,31 +350,31 @@ for tensor_name, tensor_data in tensors_to_save.items():
 
 
 
-# # %% Filter out neurons
+# %% Filter out neurons
 
 
-# N = 20  # Example value
+N = 20  # Example value
 
-# # Initialize the result tensors with the appropriate sizes
-# num_heads, d_mlp, num_prompts, prompt_len = last_layer_self_repair_across_everything.shape
-# top_neurons_idx = torch.zeros((num_heads, num_prompts, prompt_len, N))
-# top_neuron_vals = torch.zeros((num_heads, num_prompts, prompt_len, N))
-# top_neuron_initial_vals = torch.zeros((num_heads, num_prompts, prompt_len, N))
+# Initialize the result tensors with the appropriate sizes
+num_heads, d_mlp, num_prompts, prompt_len = last_layer_self_repair_across_everything.shape
+top_neurons_idx = torch.zeros((num_heads, num_prompts, prompt_len, N))
+top_neuron_vals = torch.zeros((num_heads, num_prompts, prompt_len, N))
+top_neuron_initial_vals = torch.zeros((num_heads, num_prompts, prompt_len, N))
 
-# # Iterate over each head, prompt, and position to find the top N neurons
-# for head in range(num_heads):
-#     for prompt in range(num_prompts):
-#         for position in range(prompt_len):
-#             # Select the slice for the current head, prompt, and position
-#             neurons = last_layer_self_repair_across_everything[head, :, prompt, position]
+# Iterate over each head, prompt, and position to find the top N neurons
+for head in range(num_heads):
+    for prompt in range(num_prompts):
+        for position in range(prompt_len):
+            # Select the slice for the current head, prompt, and position
+            neurons = last_layer_self_repair_across_everything[head, :, prompt, position]
             
-#             # Use torch.topk to get the top N values and their indices
-#             values, indices = torch.topk(neurons, N)
+            # Use torch.topk to get the top N values and their indices
+            values, indices = torch.topk(neurons, N)
             
-#             # Store the results in the corresponding tensors
-#             top_neurons_idx[head, prompt, position] = indices
-#             top_neuron_vals[head, prompt, position] = values
-#             top_neuron_initial_vals[head, prompt, position] = last_layer_clean_neurons_across_everything[head, :, prompt, position][indices]
+            # Store the results in the corresponding tensors
+            top_neurons_idx[head, prompt, position] = indices
+            top_neuron_vals[head, prompt, position] = values
+            top_neuron_initial_vals[head, prompt, position] = last_layer_clean_neurons_across_everything[head, :, prompt, position][indices]
 
 
 
@@ -421,8 +420,6 @@ for tensor_name, tensor_data in tensors_to_save.items():
 # # %% First: MLP explains significant portion of self-repair
 
 # ADD_BOUNDS = True # if we should bound the values because noise
-
-
 # for PERCENTILE in [0.1]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
 #     num_prompts_to_consider = int(BATCH_SIZE * num_batches * PROMPT_LEN * PERCENTILE)
 #     print("Considering top", num_prompts_to_consider, "prompts")
@@ -485,74 +482,96 @@ for tensor_name, tensor_data in tensors_to_save.items():
 
 
 
-# # %% Next: A few neurons explain all the self-repair
-# for PERCENTILE in [ 0.2]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
+ # %% A few neurons explain all the ABSOLUTE CHANGE IN NEURONS
+for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
+    num_prompts_to_consider = int(BATCH_SIZE * num_batches * PROMPT_LEN * PERCENTILE)
     
-#     num_prompts_to_consider = int(BATCH_SIZE * num_batches * PROMPT_LEN * PERCENTILE)
+    # Create the plot
+    fig = go.Figure()
     
-#     # Create the plot
-#     fig = go.Figure()
+    neuron_self_repair = last_layer_self_repair_across_everything[ablate_head]
     
-#     for head in range(model.cfg.n_heads):
-#         neuron_self_repair = last_layer_ablated_neurons_across_everything[head] - last_layer_clean_neurons_across_everything[head]
+    #top_self_repair = topk_of_Nd_tensor(self_repair_across_everything[head], num_prompts_to_consider)
+    #top_self_repair_by_last_layer = topk_of_Nd_tensor(self_repair_from_layers_across_everything[head], num_prompts_to_consider)
+    top_DE_in_head = topk_of_Nd_tensor(direct_effects_across_everything[ablate_head], num_prompts_to_consider)
+    
+    filtered_batch_pos = top_DE_in_head
+    
+    # AVERAGE SELF-REPAIR
+    all_cumulative_percentages = []
+    all_des_of_neurons = []
+    how_many_huh = 0
+    for batch, pos in filtered_batch_pos:
+        # Calculate total sum for each specific (batch, pos) pair
         
-#         #top_self_repair = topk_of_Nd_tensor(self_repair_across_everything[head], num_prompts_to_consider)
-#         #top_self_repair_by_last_layer = topk_of_Nd_tensor(self_repair_from_layers_across_everything[head], num_prompts_to_consider)
-#         top_DE_in_head = topk_of_Nd_tensor(direct_effects_across_everything[head], num_prompts_to_consider)
+        #total_neuron_self_repair = neuron_self_repair[:, batch, pos].sum()
+        absolute_changes = neuron_self_repair[:, batch, pos].abs()
+        summed_absolute_change = absolute_changes.sum()
         
-#         filtered_batch_pos = top_DE_in_head
-        
-#         # AVERAGE SELF-REPAIR
-#         all_cumulative_percentages = []
-#         for batch, pos in filtered_batch_pos:
-#             # Calculate total sum for each specific (batch, pos) pair
-#             total_neuron_self_repair = neuron_self_repair[:, batch, pos].sum()
+        if neuron_self_repair[:, batch, pos].sum() < 0.1:
+            print("Huh", neuron_self_repair[:, batch, pos].sum())
+            how_many_huh += 1
             
-#             if total_neuron_self_repair == 0:
-#                 continue
+             
 
-#             # Get the indices that would sort the array in descending order (using absolute values)
-#             sorted_indices = torch.argsort(neuron_self_repair[:, batch, pos].abs(), descending=True)
-#             #sorted_indices = torch.argsort(neuron_self_repair[:, batch, pos], descending=False)
+        # Get the indices that would sort the array in descending order (using absolute values)
+        sorted_indices = torch.argsort(neuron_self_repair[:, batch, pos], descending=True)
 
-#             # Calculate the cumulative sum of the sorted tensor
-#             cumulative_sums = torch.cumsum(neuron_self_repair[:, batch, pos][sorted_indices], dim=0)
+        # Calculate the cumulative sum of absolute changes of the sorted tensor
+        cumulative_sums = torch.cumsum(absolute_changes[sorted_indices], dim=0)
 
-#             # Convert to percentage of total sum
-#             cumulative_percentages = 100. * cumulative_sums / total_neuron_self_repair
+        # Convert to percentage of total sum
+        cumulative_percentages = 100. * cumulative_sums / summed_absolute_change
 
-#             # Append the cumulative percentages to the list
-            
-#             all_cumulative_percentages.append(cumulative_percentages.cpu().numpy())
-
-#         # Convert the list of numpy arrays into a 2D numpy array for easier averaging
-#         print(all_cumulative_percentages)
-#         all_cumulative_percentages = np.array(all_cumulative_percentages)
-#         print(all_cumulative_percentages)
+        # Append the cumulative percentages to the list
+        all_cumulative_percentages.append(cumulative_percentages.cpu().numpy())
         
-#         # Calculate the average cumulative percentages across all (batch, pos) pairs
-#         average_cumulative_percentages = np.mean(all_cumulative_percentages, axis=0)
+        # Get the initial direct effect of the neurons
+        all_des_of_neurons.append(last_layer_clean_neurons_across_everything[ablate_head, :, batch, pos][sorted_indices])
         
-        
-        
-#         # Determine X values (number of indices)
-#         x_values = np.arange(1, len(neuron_self_repair[:, batch, pos]) + 1)
-
+    print(how_many_huh)
+    # Convert the list of numpy arrays into a 2D numpy array for easier averaging
     
-#         fig.add_trace(go.Scatter(x=x_values, y=average_cumulative_percentages,
-#                             mode='lines', name='L' + str(ablate_layer) + 'H' + str(head), text = [str(i) for i in filtered_batch_pos]))
+    all_cumulative_percentages = np.array(all_cumulative_percentages)
+    all_des_of_neurons = np.array(all_des_of_neurons)
     
-#     fig.update_layout(
-#         title=f"Average Cumulative Percentage of L{model.cfg.n_layers - 1} Self-Repair explained by Top-X Neurons on Top {PERCENTILE * 100}% Examples of L{ablate_layer}",
-#         xaxis_title="Top X Neurons",
-#         yaxis_title="Average Percentage of Total Sum",
-#         yaxis=dict(tickformat=".2f"),
-#     )
+    
+    # Calculate the average cumulative percentages across all (batch, pos) pairs
+    average_cumulative_percentages = np.mean(all_cumulative_percentages, axis=0)
+    avg_all_des_of_neurons = np.median(all_des_of_neurons, axis=0)
+    
 
-#     if in_notebook_mode:
-#         fig.show()
+    # Determine X values (number of indices)
+    x_values = np.arange(1, len(neuron_self_repair[:, batch, pos]) + 1)
 
-#     #fig.write_html(FOLDER_TO_WRITE_GRAPHS_TO + f"average_cumulative_self_repair_{safe_model_name}_L{ablate_layer}_{PERCENTILE}.html")
+    # Add trace, with the color of each dot being the de of the neuron
+    fig.add_trace(go.Scatter(x=x_values, y=average_cumulative_percentages,
+                        mode='markers', 
+                        marker=dict(
+                            color=avg_all_des_of_neurons,
+                            colorscale=['red', 'white', 'blue'],
+                            colorbar=dict(
+                                title='Median Clean DE',
+                                #tickvals=[0, num_layers - 1],
+                                #ticktext=[0, 1,2,1,1,1,1,1,1,1,1,1,1,11,1,1,3,4,5,5,num_layers - 1],
+                                #orientation="h"
+                            ),
+                            cmid = 0
+                            ),
+                        name='L' + str(ablate_layer) + 'H' + str(head), text = [str(i) for i in filtered_batch_pos],))
+                  
+    fig.update_layout(
+        #title=f"Average Cumulative Percentage of L{model.cfg.n_layers - 1} Self-Repair explained by Top-X Neurons on Top {PERCENTILE * 100}% Examples of L{ablate_layer}",
+        xaxis_title="Top Xth Self-Repairing Neuron",
+        yaxis_title="Cumulative Percentage of Absolute Change",
+        yaxis=dict(tickformat=".2f"),
+    )
+
+    if in_notebook_mode:
+        fig.show()
+
+    fig.write_html(FOLDER_TO_WRITE_GRAPHS_TO + f"average_cumulative_self_repair_{safe_model_name}_L{ablate_layer}_H{ablate_head}_{PERCENTILE}.html")
+    fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + f"average_cumulative_self_repair_{safe_model_name}_L{ablate_layer}_H{ablate_head}_{PERCENTILE}.pdf")
 
 
 # %%

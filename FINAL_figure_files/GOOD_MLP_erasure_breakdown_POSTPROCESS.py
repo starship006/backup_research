@@ -237,14 +237,15 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
 # %% These neurons are usually anti-erasure neurons. Plotting the top self-repair neurons pre and post ablation
 traces = [] # initialize an empty list to store the histogram traces
 
-for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
+
+for PERCENTILE in [0.02]:  # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
     num_prompts_to_consider = int(num_prompts * prompt_len_minus_one * PERCENTILE)
     print("Considering top", num_prompts_to_consider, "prompts")
 
-    for head in [11]:#range(model.cfg.n_heads):
-        clean_direct_effect = torch.zeros(num_prompts_to_consider) # DE of top self-repair neuron on clean
-        corrupted_direct_effect = torch.zeros(num_prompts_to_consider) # DE of top self-repair neuron on corrupted
-        layer_direct_effect = torch.zeros(num_prompts_to_consider) # DE of entire layer on corrupted
+    for head in [11]:  # range(model.cfg.n_heads):
+        clean_direct_effect = torch.zeros(num_prompts_to_consider)  # DE of top self-repair neuron on clean
+        corrupted_direct_effect = torch.zeros(num_prompts_to_consider)  # DE of top self-repair neuron on corrupted
+        layer_direct_effect = torch.zeros(num_prompts_to_consider)  # DE of entire layer on corrupted
         top_neurons_self_repair = top_neuron_vals[head]
         filtered_batch_pos = topk_of_Nd_tensor(self_repair_from_layers_across_everything[head], num_prompts_to_consider)
 
@@ -253,16 +254,18 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
         for i, batch_pos in enumerate(filtered_batch_pos):
             batch, pos = batch_pos
             clean_direct_effect[i] = top_neuron_initial_vals[head, batch, pos, 0]
-            corrupted_direct_effect[i] = top_neurons_self_repair[batch, pos, 0] + top_neuron_initial_vals[head, batch, pos, 0] # self_repair = corrupted - clean
+            corrupted_direct_effect[i] = top_neurons_self_repair[batch, pos, 0] + top_neuron_initial_vals[head, batch, pos, 0]  # self_repair = corrupted - clean
             layer_direct_effect[i] = direct_effects_from_layers_across_everything[-1, batch, pos]
-        
-        fig = px.scatter(x = clean_direct_effect, y = corrupted_direct_effect, color = layer_direct_effect)#, title = "L" + str(ablate_layer) + "H" + str(head))
-        
+
+        fig = px.scatter(x=clean_direct_effect, y=corrupted_direct_effect, color=layer_direct_effect, marginal_x="histogram",)#, title = "L" + str(ablate_layer) + "H" + str(head))
+
         fig.add_trace(go.Scatter(x=[min(clean_direct_effect), max(clean_direct_effect)], y=[min(clean_direct_effect), max(clean_direct_effect)], 
-                                 mode='lines', name='y=x', line=dict(color='black', dash = 'dash')))
-        fig.update_traces(marker_size=2)
+                                 mode='lines', name='y=x', line=dict(color='black', dash='dash')))
+        
+        fig.data[0].marker.size = 2
+        # fig.update_traces(marker_size=2)
         fig.update_layout(
-            #title=f'Clean/Ablated Direct Effects of top Self-Repairing Neuron when ablating L{ablate_layer}H{head} in {safe_model_name}'+ ' | Top ' + str(PERCENTILE * 100) + '%',
+            # title=f'Clean/Ablated Direct Effects of top Self-Repairing Neuron when ablating L{ablate_layer}H{head} in {safe_model_name}'+ ' | Top ' + str(PERCENTILE * 100) + '%',
             xaxis_title='Clean Direct Effect',
             yaxis_title='Ablated Direct Effect',
             coloraxis=dict(
@@ -271,34 +274,66 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
                     [0.5, 'white'],
                     [0.75, 'lightblue'],  # Blue for positive values
                     [1, 'darkblue']
-                    ],
+                ],
                 cmid=0,                # Midpoint (white)
                 cmin=-16,              # Minimum color (-12)
                 cmax=16               # Maximum color (12)
             ),
         )
         fig.update_layout(coloraxis_colorbar=dict(yanchor="top", y=1, x=-0.2,
-                                          ticks="outside", title = "Last MLP DE"))
-        
+                                          ticks="outside", title="Last MLP DE"))
+
         range_size = 4.5
         fig.update_layout(
-            xaxis=dict(range=[-range_size,range_size]),
-            yaxis=dict(range=[-range_size,range_size]),
+            xaxis=dict(range=[-range_size, range_size]),
+            yaxis=dict(range=[-range_size, range_size]),
             plot_bgcolor='white',
-            showlegend = False
+            showlegend=False
 
         )
-        
-        
+
         fig.update_layout(
-            width = 1000,
-            height = 500,
+            width=1000,
+            height=500,
         )
-        
-        fig.update_xaxes(linecolor = 'Black',  zeroline=True, zerolinecolor='black',)
-        fig.update_yaxes(linecolor = 'Black',  zeroline=True, zerolinecolor='black',)
+
+        fig.update_xaxes(linecolor='Black', zeroline=True, zerolinecolor='black',)
+        fig.update_yaxes(linecolor='Black', zeroline=True, zerolinecolor='black',)
+
+        # Add a box around the histogram
+        # box_x_min, box_x_max = min(clean_direct_effect), max(clean_direct_effect)+0.3*abs(max(clean_direct_effect))
+        # box_y_min, box_y_max = min(corrupted_direct_effect)-0.3*abs(min(corrupted_direct_effect)), max(corrupted_direct_effect)+0.3*abs(max(corrupted_direct_effect))
+
+        rect = go.Layout({
+            'shapes': [
+                
+            #     {
+            #     'type': 'rect',
+            #     'xref': 'x',
+            #     'yref': 'y',
+            #     'x0': box_x_min,
+            #     'y0': 0,
+            #     'x1': box_x_max,
+            #     'y1': 0.1,
+            #     'fillcolor': 'WhiteSmoke',
+            #     'opacity': 1,
+            #     'line': {'width': 2, 'color': 'Black'}
+            # },
+                       
+            dict(type='rect',
+             xref='paper', yref='paper',
+             x0=0, x1 = 1, y0=0.743, y1=1,  # Adjust the height (y1 value) if needed
+             line=dict(width=2, color='black'),
+             fillcolor='rgba(0, 0, 0, 0)',
+             opacity=1,
+            ),
+            ]
+        })
+
+        fig.update_layout(rect)
+
         fig.show()
-        
+
         
 # %%
 fig.write_image(FOLDER_TO_WRITE_GRAPHS_TO + f"erasure_neuron/{safe_model_name}_L{ablate_layer}H{11}_{PERCENTILE}.pdf")    
@@ -344,13 +379,13 @@ for PERCENTILE in [0.02]: # 0.001, 0.005, 0.01, 0.02, 0.05, 0.1,
 
 
 
-# %% SAVE THESE TENSORS:
+# %% LOAD THESE TENSORS:
 
 tensors_to_load = {
     "llama-7b/MLPs_is_larger_tensors_llama-7b_L30_H8.pickle",
-    "gpt2-small/MLPs_is_larger_tensors_gpt2-small_L10_H2.pickle",
-    "pythia-160m/MLPs_is_larger_tensors_pythia-160m_L9_H3.pickle",
-    "pythia-410m/MLPs_is_larger_tensors_pythia-410m_L20_H6.pickle",
+    "gpt2-small/MLPs_is_larger_tensors_gpt2-small_L9_H11.pickle",
+    "pythia-160m/MLPs_is_larger_tensors_pythia-160m_L7_H8.pickle",
+    "pythia-410m/MLPs_is_larger_tensors_pythia-410m_L17_H4.pickle",
 }
 
 tensor_names = {
@@ -372,7 +407,7 @@ for tensor_name in tensors_to_load:
         all_is_larger_tensors.append(a)
         
 # %%
-model_names = ["Llama-7b L30H8", "GPT-2 Small L10H2", "Pythia-160m L9H3", "Pythia-410m L20H6"]
+model_names = ["Llama-7b L30H8", "GPT-2 Small L9H11", "Pythia-160m L7H8", "Pythia-410m L17H4"]
 percentages = [0.5, 0.1, 0.05, 0.025, 0.01]
 fig = make_subplots(rows = 2, cols = 2,  vertical_spacing=0.125, horizontal_spacing=0.1, subplot_titles=model_names)
 colors = ["#EDBFC6", "#66D9D7", "#678FBF", "#465DA3", "#192A5E"]
